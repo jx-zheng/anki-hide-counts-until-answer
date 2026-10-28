@@ -11,6 +11,8 @@ from hide_counts_until_answer.counts_dom import (
     bottom_bar_script,
     count_class_selector,
     review_side_for_show_kind,
+    refit_action,
+    row_is_present,
     should_refit_bottom,
     should_restore_counts,
     visibility_for,
@@ -74,6 +76,18 @@ def test_answer_counts_use_stock_stattxt_above_the_buttons() -> None:
     assert should_refit_bottom("stock", "show")
     assert not should_refit_bottom("hide", "hide")
     assert not should_refit_bottom("stock", "stock")
+    assert refit_action("show", True, hidden=True) == "skip"
+    assert refit_action("hide", False, hidden=True) == "skip"
+    assert refit_action("show", False, hidden=False) == "wait"
+    assert refit_action("show", True, hidden=False) == "refit"
+    assert refit_action("hide", False, hidden=False) == "refit"
+    assert refit_action("stock", False, hidden=False) == "refit"
+    assert row_is_present(True) is True
+    assert row_is_present(1) is True
+    assert row_is_present("true") is True
+    assert row_is_present(False) is False
+    assert row_is_present("false") is False
+    assert row_is_present(None) is False
     mode_only = bottom_bar_script("stock", apply=False)
     assert 'window.__hcuSetModeOnly("stock")' in mode_only
     assert 'window.__hcuSetMode("stock")' not in mode_only

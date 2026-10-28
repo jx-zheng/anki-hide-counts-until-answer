@@ -18,7 +18,9 @@ from .allowlist import (
 )
 from .counts_dom import (
     bottom_bar_script,
+    refit_action,
     review_side_for_show_kind,
+    row_is_present,
     should_refit_bottom,
     should_restore_counts,
     visibility_for,
@@ -39,6 +41,15 @@ HELP_TEXT = (
 # has not concealed anything, so other decks are not touched.
 _applied = "stock"
 _menu_ready = False
+
+# While show mode is up but the ease buttons have not been drawn yet, poll
+# for the answer row. 50ms matches Anki's delayed ``_showEaseButtons`` retry.
+# This is not a blind height change: each tick refits only if the row is there.
+_ROW_WAIT_MS = 50
+_ROW_WAIT_LIMIT = 20
+_REVEAL_PRESENT_JS = '!!document.getElementById("hcu-count-reveal")'
+_row_wait_active = False
+_row_wait_token = 0
 
 
 def install_hooks(gui_hooks: Any) -> None:
@@ -175,42 +186,148 @@ def _apply_mode(mode: str) -> None:
         return
     previous = _applied
     _applied = mode
-    _eval_bottom(bottom_bar_script(mode))
-    if should_refit_bottom(mode, previous):
-        _schedule_refit()
+    _eval_bottom(
+        bottom_bar_script(mode),
+        after=_after_mode_script if should_refit_bottom(mode, previous) else None,
+        mode=mode,
+    )
 
 
-def _schedule_refit() -> None:
-    """Match the bottom webview to the row Anki's fixed height would clip.
+def _after_mode_script(mode: str, present_value: Any) -> None:
+    """Refit once the mode script has finished, or wait until the row exists."""
 
-    The answer row is in the document, so ``body { overflow: hidden }`` does
-    not hide it, but the reviewer bottom webview keeps the height it measured
-    on the question. Refit after the bar JS has run, and again when that row
-    is gone, so the bar does not stay tall.
+    action = refit_action(
+        mode,
+        row_is_present(present_value),
+        hidden=_web_is_hidden(),
+    )
+    if action == "skip":
+        _cancel_row_wait()
+        return
+    if action == "wait":
+        _arm_row_wait()
+        return
+    _cancel_row_wait()
+    _refit_now()
+
+
+def _web_is_hidden() -> bool:
+    web = _bottom_web()
+    if web is None:
+        return False
+    return bool(getattr(web, "hidden", False))
+
+
+def _refit_now() -> None:
+    """Match the webview to the document. A collapsed bar is left alone.
+
+    ``BottomWebView.hide()`` sets ``hidden`` and shrinks the bar to 1px while
+    the widget stays on screen. ``adjustHeightToFit`` would open it again.
+    ``BottomWebView.show()`` measures on its own when the bar is revealed.
     """
 
-    def run() -> None:
-        from aqt import mw
+    from aqt import mw
 
-        if mw.state != "review":
+    if mw.state != "review":
+        return
+    web = _bottom_web()
+    if web is None or getattr(web, "hidden", False):
+        return
+    if not hasattr(web, "adjustHeightToFit"):
+        return
+    try:
+        web.adjustHeightToFit()
+    except Exception:
+        logger.debug("bottom bar height update failed", exc_info=True)
+
+
+def _cancel_row_wait() -> None:
+    global _row_wait_active, _row_wait_token
+    _row_wait_active = False
+    _row_wait_token += 1
+
+
+def _arm_row_wait() -> None:
+    global _row_wait_active, _row_wait_token
+    if _row_wait_active:
+        return
+    _row_wait_active = True
+    _row_wait_token += 1
+    _schedule_row_tick(_row_wait_token, _ROW_WAIT_LIMIT)
+
+
+def _mark_row_wait_idle(token: int) -> None:
+    global _row_wait_active
+    if token == _row_wait_token:
+        _row_wait_active = False
+
+
+def _schedule_row_tick(token: int, remaining: int) -> None:
+    def tick() -> None:
+        if token != _row_wait_token or _applied != "show" or remaining <= 0:
+            _mark_row_wait_idle(token)
             return
         web = _bottom_web()
-        if web is None or not hasattr(web, "adjustHeightToFit"):
+        if (
+            web is None
+            or getattr(web, "hidden", False)
+            or not hasattr(web, "evalWithCallback")
+        ):
+            _mark_row_wait_idle(token)
             return
+
+        def on_present(value: Any) -> None:
+            if token != _row_wait_token or _applied != "show":
+                _mark_row_wait_idle(token)
+                return
+            current = _bottom_web()
+            if current is None or getattr(current, "hidden", False):
+                _mark_row_wait_idle(token)
+                return
+            if row_is_present(value):
+                _mark_row_wait_idle(token)
+                _refit_now()
+                return
+            if remaining <= 1:
+                _mark_row_wait_idle(token)
+                return
+            _schedule_row_tick(token, remaining - 1)
+
         try:
-            web.adjustHeightToFit()
+            web.evalWithCallback(_REVEAL_PRESENT_JS, on_present)
         except Exception:
-            logger.debug("bottom bar height update failed", exc_info=True)
+            logger.debug("answer-row check failed", exc_info=True)
+            _mark_row_wait_idle(token)
 
-    _single_shot(200, run)
+    _single_shot(_ROW_WAIT_MS, tick)
 
 
-def _eval_bottom(script: str) -> None:
+def _eval_bottom(
+    script: str,
+    *,
+    after: Any = None,
+    mode: str | None = None,
+) -> None:
     web = _bottom_web()
     if web is None:
         return
+    js = script if after is None else f"{script}\n{_REVEAL_PRESENT_JS};\n"
+
+    def done(value: Any = None) -> None:
+        if after is None:
+            return
+        try:
+            after(mode or "stock", value)
+        except Exception:
+            logger.debug("bottom bar follow-up failed", exc_info=True)
+
     try:
-        web.eval(script)
+        if after is not None and hasattr(web, "evalWithCallback"):
+            web.evalWithCallback(js, done)
+        else:
+            web.eval(js)
+            if after is not None and mode != "show":
+                done(False)
     except Exception:
         logger.debug("bottom bar eval failed", exc_info=True)
 
@@ -234,7 +351,13 @@ def _schedule_retry(card: Any, side: str, mode: str) -> None:
     def retry() -> None:
         if _applied != mode or not _still_on_side(card_id, side):
             return
-        _eval_bottom(bottom_bar_script(mode))
+        # Answer retries re-apply show after delayed ease buttons. Refit only
+        # once that pass has left ``#hcu-count-reveal`` in the page.
+        _eval_bottom(
+            bottom_bar_script(mode),
+            after=_after_mode_script if mode == "show" else None,
+            mode=mode,
+        )
 
     _single_shot(80 if side == "answer" else 50, retry)
 

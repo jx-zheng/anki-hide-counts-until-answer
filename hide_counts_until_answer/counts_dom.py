@@ -31,6 +31,7 @@ not delete a question Anki just drew.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 # Class names from Reviewer._remaining in Anki 25.09 and 26.09.3.
 COUNT_CLASSES: tuple[str, ...] = ("new-count", "learn-count", "review-count")
@@ -83,6 +84,35 @@ def should_refit_bottom(mode: str, previous: str) -> bool:
     """The answer row changes the bar height. Refit when it appears or goes away."""
 
     return mode == "show" or previous == "show"
+
+
+def row_is_present(value: Any) -> bool:
+    """Coerce the bottom-page ``#hcu-count-reveal`` check into a bool.
+
+    Qt hands the JS boolean through as ``True`` / ``False``. A string shows
+    up on some bindings; ``"false"`` must not count as present.
+    """
+
+    if value is True or value == 1:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1"}
+    return False
+
+
+def refit_action(mode: str, row_present: bool, *, hidden: bool) -> str:
+    """``skip``, ``wait``, or ``refit`` after the bottom-bar script finishes.
+
+    A collapsed auto-hidden bar stays collapsed (``skip``). Show mode waits
+    until the answer row is actually in the page, then refits. Leaving show
+    refits immediately so the bar does not stay tall.
+    """
+
+    if hidden:
+        return "skip"
+    if mode == "show" and not row_present:
+        return "wait"
+    return "refit"
 
 
 def review_side_for_show_kind(kind: str) -> str | None:

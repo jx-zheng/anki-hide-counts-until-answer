@@ -19,6 +19,7 @@ from .allowlist import (
 from .counts_dom import (
     bottom_bar_script,
     review_side_for_show_kind,
+    should_refit_bottom,
     should_restore_counts,
     visibility_for,
 )
@@ -172,8 +173,36 @@ def _apply_mode(mode: str) -> None:
     global _applied
     if mode == "stock" and _applied == "stock":
         return
+    previous = _applied
     _applied = mode
     _eval_bottom(bottom_bar_script(mode))
+    if should_refit_bottom(mode, previous):
+        _schedule_refit()
+
+
+def _schedule_refit() -> None:
+    """Match the bottom webview to the row Anki's fixed height would clip.
+
+    The answer row is in the document, so ``body { overflow: hidden }`` does
+    not hide it, but the reviewer bottom webview keeps the height it measured
+    on the question. Refit after the bar JS has run, and again when that row
+    is gone, so the bar does not stay tall.
+    """
+
+    def run() -> None:
+        from aqt import mw
+
+        if mw.state != "review":
+            return
+        web = _bottom_web()
+        if web is None or not hasattr(web, "adjustHeightToFit"):
+            return
+        try:
+            web.adjustHeightToFit()
+        except Exception:
+            logger.debug("bottom bar height update failed", exc_info=True)
+
+    _single_shot(200, run)
 
 
 def _eval_bottom(script: str) -> None:

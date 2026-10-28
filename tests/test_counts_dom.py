@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from hide_counts_until_answer.counts_dom import (
     ANSWER_BUTTON_SELECTOR,
+    ANSWER_ROW_HEIGHT,
     COUNT_CLASSES,
     LEGACY_COUNT_IDS,
     QUESTION_HOST_SELECTOR,
-    REVEAL_STYLE,
     bottom_bar_script,
     count_class_selector,
     review_side_for_show_kind,
+    should_refit_bottom,
     should_restore_counts,
     visibility_for,
 )
@@ -58,14 +59,21 @@ def test_script_uses_verified_selectors_and_does_not_drive_scheduling() -> None:
     assert 'window.__hcuSetMode("stock")' in bottom_bar_script("nope")
 
 
-def test_answer_counts_are_absolute_and_stock_puts_them_back() -> None:
+def test_answer_counts_use_stock_stattxt_above_the_buttons() -> None:
     script = bottom_bar_script("show")
-    assert "position:absolute" in script
-    assert REVEAL_STYLE in script
-    assert "top:-3px" not in script
-    assert "getBoundingClientRect" in script
+    assert f'row.style.height = "{ANSWER_ROW_HEIGHT}"' in script
+    assert "data-hcu-line" in script
+    assert "position:absolute;left:0;right:0;bottom:0" in script
+    assert "left:50%" not in script
+    assert "left: 50%" not in script
+    assert "getBoundingClientRect" not in script
     assert "scrollHeight" not in script
     assert "padding:2px 8px 12px" not in script
+    assert should_refit_bottom("show", "hide")
+    assert should_refit_bottom("hide", "show")
+    assert should_refit_bottom("stock", "show")
+    assert not should_refit_bottom("hide", "hide")
+    assert not should_refit_bottom("stock", "stock")
     mode_only = bottom_bar_script("stock", apply=False)
     assert 'window.__hcuSetModeOnly("stock")' in mode_only
     assert 'window.__hcuSetMode("stock")' not in mode_only

@@ -18,13 +18,14 @@ still concealed when some other bottom bar leaves them in the page.
 
 The question side conceals the live nodes (and parks the ``.stattxt`` host
 outside ``#middle`` so Anki's answer HTML does not destroy them). The answer
-side shows that host again, absolutely positioned against the ease-button
-border the way ``.stattxt`` is (``top: -3px`` and ``translateY(-100%)``).
-Anchoring those offsets to the top of ``#middle`` paints the line above the
-bar; ``toolbar-bottom.scss`` sets ``body { overflow: hidden }``, so the
-counts stay invisible after Show Answer. The bar does not grow. Stock mode
-puts a concealed host back into ``#ansbut`` when the watcher hid the next
-question early; it does not delete a question Anki just drew.
+side mounts that same host, with Anki's ``.stattxt`` rules left intact, on an
+in-flow row above the ease buttons. Those rules position the line against
+that row (``top: -3px`` and ``translateY(-100%)``), which keeps it inside
+the bar. Anchoring the same offsets to the top of ``#middle``, or centering
+them in the ``.nobold`` band, either clips the line (``body { overflow:
+hidden }``) or paints it over Hard/Good. Stock mode puts a concealed host
+back into ``#ansbut`` when the watcher hid the next question early; it does
+not delete a question Anki just drew.
 """
 
 from __future__ import annotations
@@ -45,23 +46,11 @@ QUESTION_HOST_SELECTOR = "#ansbut > span.stattxt"
 
 MODES: tuple[str, ...] = ("hide", "show", "stock")
 
-# Horizontal placement matches ``.stattxt`` / ``.nobold`` in
-# reviewer-bottom.scss. ``top`` is set in the page, against the ease-button
-# border, so the line stays inside the fixed-height bar. Absolute, so the
-# answer-side counts do not add a row.
-REVEAL_STYLE = (
-    "position:absolute;left:50%;transform:translate(-50%,-100%);"
-    "white-space:nowrap;pointer-events:none;z-index:5;font-size:small;"
-    "font-weight:normal;text-align:center;margin:0;padding:0;"
-)
-
-# reviewer-bottom.scss: ``#middle td[align=center]`` padding-top is 10px and
-# ``button`` margin is 9px. Used when the bottom bar has not been laid out
-# yet and the button's border offset measures as 0.
-BUTTON_BORDER_FALLBACK = 19
-
-# ``.stattxt`` uses ``top: -3px`` from the button border.
-STATTXT_ABOVE_BUTTON = 3
+# In-flow pocket above the ease buttons. Tall enough that ``.stattxt``
+# (``font-size: small``, then ``top: -3px`` and ``translateY(-100%)``) sits
+# inside the row. One static height: the line is not measured against the
+# buttons, and it is not centered in the ``.nobold`` band.
+ANSWER_ROW_HEIGHT = "20px"
 
 
 def count_class_selector() -> str:
@@ -88,6 +77,12 @@ def should_restore_counts(new_state: str, old_state: str) -> bool:
     """True when the reviewer is being left, so a conceal cannot stick."""
 
     return old_state == "review" and new_state != "review"
+
+
+def should_refit_bottom(mode: str, previous: str) -> bool:
+    """The answer row changes the bar height. Refit when it appears or goes away."""
+
+    return mode == "show" or previous == "show"
 
 
 def review_side_for_show_kind(kind: str) -> str | None:
@@ -218,6 +213,9 @@ _INSTALL_JS = r"""
   }
 
   function hideCounts() {
+    var reveal = document.getElementById("hcu-count-reveal");
+    var revealedHost = reveal && reveal.querySelector("span.stattxt");
+    if (revealedHost && hostHasCounts(revealedHost)) parkHost(revealedHost);
     removeReveal();
     var host = countHost();
     if (host && hostHasCounts(host)) parkHost(host);
@@ -267,25 +265,25 @@ _INSTALL_JS = r"""
     return live;
   }
 
-  function placeLikeStattxt(host) {
-    unconceal(host);
-    host.style.setProperty("position", "static", "important");
-    host.style.setProperty("transform", "none", "important");
-    host.style.setProperty("top", "auto", "important");
-    host.style.setProperty("left", "auto", "important");
-    host.style.setProperty("display", "inline", "important");
-    host.style.setProperty("visibility", "visible", "important");
-    host.style.setProperty("white-space", "nowrap", "important");
-    host.style.setProperty("font-size", "small", "important");
-    host.style.setProperty("font-weight", "normal", "important");
-  }
-
-  function easeButtonBorderTop(anchor) {
-    var button = document.querySelector(ANSWER_BUTTON_SELECTOR);
-    if (!button) return __BUTTON_BORDER_FALLBACK__;
-    var delta = button.getBoundingClientRect().top - anchor.getBoundingClientRect().top;
-    if (delta > 1) return Math.round(delta);
-    return __BUTTON_BORDER_FALLBACK__;
+  function answerLine(middle) {
+    var row = document.getElementById("hcu-count-reveal");
+    if (!row) {
+      row = document.createElement("div");
+      row.id = "hcu-count-reveal";
+      row.setAttribute("data-hcu", "counts");
+      // In-flow row above the ease buttons. The inner edge is the containing
+      // block .stattxt already uses on Show Answer, so the line stays inside
+      // this row instead of covering .nobold or painting above the webview.
+      row.style.cssText = "position:relative;margin:0;padding:0;pointer-events:none;overflow:visible;";
+      row.style.height = __ANSWER_ROW_HEIGHT__;
+      var line = document.createElement("div");
+      line.setAttribute("data-hcu-line", "1");
+      line.style.cssText = "position:absolute;left:0;right:0;bottom:0;height:0;pointer-events:none;";
+      row.appendChild(line);
+      if (middle.firstChild) middle.insertBefore(row, middle.firstChild);
+      else middle.appendChild(row);
+    }
+    return row.querySelector("[data-hcu-line]");
   }
 
   function showCounts() {
@@ -298,22 +296,12 @@ _INSTALL_JS = r"""
     if (!middle) return;
     var host = parkedOrRevealedHost();
     if (!host) return;
-    if (!middle.style.position) middle.style.position = "relative";
-    var reveal = document.getElementById("hcu-count-reveal");
-    if (!reveal) {
-      reveal = document.createElement("div");
-      reveal.id = "hcu-count-reveal";
-      reveal.setAttribute("data-hcu", "counts");
-      reveal.style.cssText = __REVEAL_STYLE__;
-      middle.appendChild(reveal);
-    }
-    // Bottom of the line sits a few pixels above the ease buttons, then
-    // translateY(-100%) lifts the text into the padding Anki already
-    // reserves there. A negative top on #middle is above the webview, and
-    // body { overflow: hidden } keeps it invisible.
-    reveal.style.top = (easeButtonBorderTop(middle) - __STATTXT_ABOVE_BUTTON__) + "px";
-    placeLikeStattxt(host);
-    if (host.parentNode !== reveal) reveal.appendChild(host);
+    var line = answerLine(middle);
+    if (!line) return;
+    // Drop inline geometry from the question conceal so Anki's .stattxt
+    // rule is what places the line. Do not center it on #middle.
+    releaseHost(host);
+    if (host.parentNode !== line) line.appendChild(host);
   }
 
   function unconcealMarked() {
@@ -394,9 +382,7 @@ def bottom_bar_script(mode: str, *, apply: bool = True) -> str:
         .replace("__LEGACY_IDS__", json.dumps(list(LEGACY_COUNT_IDS)))
         .replace("__ANSWER_BUTTON_SELECTOR__", json.dumps(ANSWER_BUTTON_SELECTOR))
         .replace("__QUESTION_HOST_SELECTOR__", json.dumps(QUESTION_HOST_SELECTOR))
-        .replace("__REVEAL_STYLE__", json.dumps(REVEAL_STYLE))
-        .replace("__BUTTON_BORDER_FALLBACK__", json.dumps(BUTTON_BORDER_FALLBACK))
-        .replace("__STATTXT_ABOVE_BUTTON__", json.dumps(STATTXT_ABOVE_BUTTON))
+        .replace("__ANSWER_ROW_HEIGHT__", json.dumps(ANSWER_ROW_HEIGHT))
     )
     setter = "__hcuSetMode" if apply else "__hcuSetModeOnly"
     return script + f"\nif (window.{setter}) window.{setter}({json.dumps(mode)});\n"

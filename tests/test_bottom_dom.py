@@ -130,19 +130,36 @@ function visible(host) {
 function assertAnswerCountsVisible(doc, label) {
   const reveal = doc.getElementById("hcu-count-reveal");
   if (!reveal) throw new Error(label + ": answer did not reveal counts");
-  if (reveal.style.position !== "absolute") {
-    throw new Error(label + ": reveal is not absolute: " + reveal.style.cssText);
+  if (reveal.parentElement !== doc.getElementById("middle")) {
+    throw new Error(label + ": reveal is not in the bottom bar");
   }
-  if (reveal.style.padding && reveal.style.padding !== "0px") {
-    throw new Error(label + ": reveal padding grows the bar: " + reveal.style.padding);
+  if (reveal.style.position !== "relative") {
+    throw new Error(label + ": reveal is not the in-flow row: " + reveal.style.cssText);
   }
-  const top = parseFloat(reveal.style.top);
-  if (!(top > 0)) {
-    throw new Error(label + ": counts are placed above the bar: " + reveal.style.cssText);
+  if ((reveal.style.left || "").includes("50") || (reveal.style.top && parseFloat(reveal.style.top) > 0)) {
+    throw new Error(label + ": reveal is centered in the interval band: " + reveal.style.cssText);
   }
-  const host = reveal.querySelector("span.stattxt");
-  if (!visible(host)) {
-    throw new Error(label + ": answer counts are not visible");
+  const line = reveal.querySelector("[data-hcu-line]");
+  if (!line) throw new Error(label + ": missing stock anchor");
+  if ((line.style.left || "").includes("50") || line.style.top) {
+    throw new Error(label + ": anchor recenters on the ease buttons: " + line.style.cssText);
+  }
+  const ease = doc.querySelector("#middle button[data-ease]");
+  if (!ease) throw new Error(label + ": missing ease buttons");
+  const row = ease.closest("table") || ease;
+  // 4 is DOCUMENT_POSITION_FOLLOWING. Node is not a global in the runner.
+  const beforeButtons = (reveal.compareDocumentPosition(row) & 4) !== 0;
+  if (!beforeButtons) throw new Error(label + ": counts are not above the ease buttons");
+  if (reveal.querySelector("button[data-ease], .nobold")) {
+    throw new Error(label + ": reveal wraps interval labels");
+  }
+  const host = line.querySelector("span.stattxt");
+  if (!host || host.closest("button[data-ease]")) {
+    throw new Error(label + ": counts are mounted on an ease button");
+  }
+  if (!visible(host)) throw new Error(label + ": answer counts are not visible");
+  if ((host.style.left || "").includes("50") || host.style.position === "static") {
+    throw new Error(label + ": host left stock .stattxt placement: " + host.style.cssText);
   }
   const shown = host.querySelector(".learn-count u");
   if (!shown || shown.textContent !== "3") {

@@ -19,7 +19,7 @@ That block sits in `#ansbut > span.stattxt`, above **Show Answer**. The current 
 Showing the answer replaces `#middle` with the ease buttons (`button[data-ease]`), so those nodes would otherwise disappear. On a whitelisted deck this add-on:
 
 1. Conceals the live count nodes on the question (`visibility: hidden`) and parks that `.stattxt` host outside `#middle`, so the answer render does not destroy it.
-2. After the answer is shown, puts that same host back, absolutely positioned against the ease-button border the way Anki's `.stattxt` is. The bottom bar does not grow. The line stays inside the bar (`body` clips overflow), so the counts are visible again.
+2. After the answer is shown, mounts that same `.stattxt` host on an in-flow row above the ease buttons and leaves Anki's `.stattxt` rules in charge of placement. The line sits in that row, inside the bar, and does not cover the interval labels. The bottom webview is refit to the row, then refit again when the next question removes it.
 3. If the next card is not allowlisted, puts any counts the watcher already hid back onto **Show Answer** instead of deleting them.
 
 `#new`, `#lrn`, and `#rev` are not in the 25.09+ reviewer. If a bottom bar still has them, they are concealed on the question and shown again on the answer. The ease buttons themselves are not rewritten, and the bottom bar HTML is not replaced.
@@ -76,6 +76,6 @@ Headless. `aqt` is not imported. The suite checks:
 - Free Review / filtered cards use `odid` as the home deck when it is set, and `did` otherwise. A missing home deck hides nothing.
 - The checklist checks exact ids and names, writes those ids, and keeps a covered child covered through the parent id.
 - Question + allowlist is hide, answer + allowlist is show, anything else is stock. Leaving review restores.
-- The bottom-bar script targets `.new-count`, `.learn-count`, and `.review-count`, and `#ansbut > span.stattxt`. It does not call `pycmd` or replace `#middle` HTML. Answer-side counts are `position:absolute`, like `.stattxt`, and the script does not read `scrollHeight`.
+- The bottom-bar script targets `.new-count`, `.learn-count`, and `.review-count`, and `#ansbut > span.stattxt`. It does not call `pycmd` or replace `#middle` HTML. On the answer, the parked `.stattxt` is mounted on an in-flow row above the ease buttons so Anki's own `.stattxt` rule places it. The script does not center that row on the interval labels and does not read `scrollHeight`.
 - A whitelisted question followed immediately by another question (no answer in between) leaves that next card's counts visible. The markup is the Anki 25.09.2 reviewer bottom bar.
 - `scripts/package_addon.py` builds an `.ankiaddon` with `zipfile`. The shell wrapper does not call the `zip` CLI.

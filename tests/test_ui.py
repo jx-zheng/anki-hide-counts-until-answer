@@ -46,23 +46,6 @@ def test_install_hooks_registers_each_entry_point() -> None:
     assert hooks.main_window_did_init.callbacks == [ui.on_main_window]
 
 
-def test_hidden_bar_is_not_refit_and_show_waits_for_the_row(monkeypatch) -> None:
-    calls: list[str] = []
-    monkeypatch.setattr(ui, "_web_is_hidden", lambda: True)
-    monkeypatch.setattr(ui, "_refit_now", lambda: calls.append("refit"))
-    monkeypatch.setattr(ui, "_arm_row_wait", lambda: calls.append("wait"))
-    ui._after_mode_script("show", True)
-    ui._after_mode_script("hide", False)
-    assert calls == []
-
-    monkeypatch.setattr(ui, "_web_is_hidden", lambda: False)
-    ui._after_mode_script("show", False)
-    ui._after_mode_script("show", "false")
-    ui._after_mode_script("show", True)
-    ui._after_mode_script("hide", False)
-    assert calls == ["wait", "wait", "refit", "refit"]
-
-
 def test_card_will_show_returns_card_html_unchanged() -> None:
     html = "<div id=qa>front</div>"
     ui._applied = "stock"

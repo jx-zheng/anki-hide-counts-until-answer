@@ -18,20 +18,20 @@ still concealed when some other bottom bar leaves them in the page.
 
 The question side conceals the live nodes (and parks the ``.stattxt`` host
 outside ``#middle`` so Anki's answer HTML does not destroy them). The answer
-side mounts that same host, with Anki's ``.stattxt`` rules left intact, on an
-in-flow row above the ease buttons. Those rules position the line against
-that row (``top: -3px`` and ``translateY(-100%)``), which keeps it inside
-the bar. Anchoring the same offsets to the top of ``#middle``, or centering
-them in the ``.nobold`` band, either clips the line (``body { overflow:
-hidden }``) or paints it over Hard/Good. Stock mode puts a concealed host
-back into ``#ansbut`` when the watcher hid the next question early; it does
-not delete a question Anki just drew.
+side puts that same host back as the last child of the Edit button. That is
+the stock ``button > span.stattxt`` relationship (``#ansbut`` on the
+question, ``#time`` on More), and the Edit button's slot is empty after
+``showAnswer``. Anki's own ``.stattxt`` rule then paints the line in the
+padding above Edit, inside the bar, without a taller row and without
+covering ``.nobold``. Parenting it to ``#middle`` or to an ease button
+either clips it above the bar or overprints an interval. Stock mode puts a
+concealed host back into ``#ansbut`` when the watcher hid the next question
+early; it does not delete a question Anki just drew.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any
 
 # Class names from Reviewer._remaining in Anki 25.09 and 26.09.3.
 COUNT_CLASSES: tuple[str, ...] = ("new-count", "learn-count", "review-count")
@@ -46,12 +46,6 @@ ANSWER_BUTTON_SELECTOR = "#middle button[data-ease]"
 QUESTION_HOST_SELECTOR = "#ansbut > span.stattxt"
 
 MODES: tuple[str, ...] = ("hide", "show", "stock")
-
-# In-flow pocket above the ease buttons. Tall enough that ``.stattxt``
-# (``font-size: small``, then ``top: -3px`` and ``translateY(-100%)``) sits
-# inside the row. One static height: the line is not measured against the
-# buttons, and it is not centered in the ``.nobold`` band.
-ANSWER_ROW_HEIGHT = "20px"
 
 
 def count_class_selector() -> str:
@@ -78,41 +72,6 @@ def should_restore_counts(new_state: str, old_state: str) -> bool:
     """True when the reviewer is being left, so a conceal cannot stick."""
 
     return old_state == "review" and new_state != "review"
-
-
-def should_refit_bottom(mode: str, previous: str) -> bool:
-    """The answer row changes the bar height. Refit when it appears or goes away."""
-
-    return mode == "show" or previous == "show"
-
-
-def row_is_present(value: Any) -> bool:
-    """Coerce the bottom-page ``#hcu-count-reveal`` check into a bool.
-
-    Qt hands the JS boolean through as ``True`` / ``False``. A string shows
-    up on some bindings; ``"false"`` must not count as present.
-    """
-
-    if value is True or value == 1:
-        return True
-    if isinstance(value, str):
-        return value.strip().lower() in {"true", "1"}
-    return False
-
-
-def refit_action(mode: str, row_present: bool, *, hidden: bool) -> str:
-    """``skip``, ``wait``, or ``refit`` after the bottom-bar script finishes.
-
-    A collapsed auto-hidden bar stays collapsed (``skip``). Show mode waits
-    until the answer row is actually in the page, then refits. Leaving show
-    refits immediately so the bar does not stay tall.
-    """
-
-    if hidden:
-        return "skip"
-    if mode == "show" and not row_present:
-        return "wait"
-    return "refit"
 
 
 def review_side_for_show_kind(kind: str) -> str | None:
@@ -144,12 +103,12 @@ _INSTALL_JS = r"""
 
   function countHost() {
     var direct = document.querySelector(__QUESTION_HOST_SELECTOR__);
-    if (direct && !direct.closest("#hcu-count-reveal")) return direct;
+    if (direct) return direct;
     var spans = document.querySelectorAll("#middle span.stattxt");
     for (var i = 0; i < spans.length; i++) {
       var span = spans[i];
       if (span.id === "time") continue;
-      if (span.closest("#hcu-count-reveal")) continue;
+      if (span.closest("#hcu-count-park")) continue;
       return span;
     }
     return null;
@@ -169,7 +128,7 @@ _INSTALL_JS = r"""
     for (var i = 0; i < LEGACY_IDS.length; i++) {
       var node = document.getElementById(LEGACY_IDS[i]);
       if (!node) continue;
-      if (node.closest("#hcu-count-park, #hcu-count-reveal")) continue;
+      if (node.closest("#hcu-count-park")) continue;
       var host = countHost();
       if (host && host.contains(node)) continue;
       found.push(node);
@@ -208,11 +167,6 @@ _INSTALL_JS = r"""
     if (park) park.remove();
   }
 
-  function removeReveal() {
-    var reveal = document.getElementById("hcu-count-reveal");
-    if (reveal) reveal.remove();
-  }
-
   function remember(host) {
     if (host && host.innerHTML) {
       document.documentElement.setAttribute("data-hcu-html", host.innerHTML);
@@ -228,11 +182,9 @@ _INSTALL_JS = r"""
     park.appendChild(host);
   }
 
-  function parkedOrRevealedHost() {
+  function parkedHost() {
     var park = document.getElementById("hcu-count-park");
-    var revealed = document.getElementById("hcu-count-reveal");
-    var host = (park && park.querySelector("span.stattxt")) ||
-      (revealed && revealed.querySelector("span.stattxt"));
+    var host = park && park.querySelector("span.stattxt");
     if (host) return host;
     var html = document.documentElement.getAttribute("data-hcu-html") || "";
     if (!html) return null;
@@ -242,11 +194,42 @@ _INSTALL_JS = r"""
     return host;
   }
 
+  // Edit is the bottom-bar button whose .stattxt slot is empty after
+  // showAnswer. More already has #time, and ease buttons have .nobold.
+  function editButton() {
+    var buttons = document.querySelectorAll("td.stat button");
+    for (var i = 0; i < buttons.length; i++) {
+      if (buttons[i].querySelector("#time")) continue;
+      return buttons[i];
+    }
+    return null;
+  }
+
+  function answerMountedHost() {
+    return directCountHost(editButton());
+  }
+
+  function injectedCountHost() {
+    var nodes = document.querySelectorAll("#middle span.stattxt");
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (node.id === "time") continue;
+      if (node.closest("#hcu-count-park")) continue;
+      if (node.closest("button[data-ease]")) continue;
+      if (hostHasCounts(node)) return node;
+    }
+    return null;
+  }
+
+  function dropAnswerMount() {
+    var mounted = answerMountedHost();
+    if (mounted) mounted.remove();
+  }
+
   function hideCounts() {
-    var reveal = document.getElementById("hcu-count-reveal");
-    var revealedHost = reveal && reveal.querySelector("span.stattxt");
-    if (revealedHost && hostHasCounts(revealedHost)) parkHost(revealedHost);
-    removeReveal();
+    // The answer mount sits on Edit, outside #middle, so showQuestion's
+    // innerHTML wipe does not take it with the ease buttons.
+    dropAnswerMount();
     var host = countHost();
     if (host && hostHasCounts(host)) parkHost(host);
     var legacy = legacyOutside();
@@ -284,7 +267,7 @@ _INSTALL_JS = r"""
   function hostIsConcealed(host) {
     if (!host) return false;
     if (host.getAttribute("data-hcu-concealed") === "1") return true;
-    if (host.closest("#hcu-count-park, #hcu-count-reveal")) return true;
+    if (host.closest("#hcu-count-park")) return true;
     return host.style.getPropertyValue("visibility") === "hidden";
   }
 
@@ -295,43 +278,29 @@ _INSTALL_JS = r"""
     return live;
   }
 
-  function answerLine(middle) {
-    var row = document.getElementById("hcu-count-reveal");
-    if (!row) {
-      row = document.createElement("div");
-      row.id = "hcu-count-reveal";
-      row.setAttribute("data-hcu", "counts");
-      // In-flow row above the ease buttons. The inner edge is the containing
-      // block .stattxt already uses on Show Answer, so the line stays inside
-      // this row instead of covering .nobold or painting above the webview.
-      row.style.cssText = "position:relative;margin:0;padding:0;pointer-events:none;overflow:visible;";
-      row.style.height = __ANSWER_ROW_HEIGHT__;
-      var line = document.createElement("div");
-      line.setAttribute("data-hcu-line", "1");
-      line.style.cssText = "position:absolute;left:0;right:0;bottom:0;height:0;pointer-events:none;";
-      row.appendChild(line);
-      if (middle.firstChild) middle.insertBefore(row, middle.firstChild);
-      else middle.appendChild(row);
-    }
-    return row.querySelector("[data-hcu-line]");
-  }
-
   function showCounts() {
     var legacy = legacyOutside();
     if (legacy.length && answerIsShown()) {
       for (var i = 0; i < legacy.length; i++) unconceal(legacy[i]);
     }
     if (!answerIsShown()) return;
-    var middle = document.getElementById("middle");
-    if (!middle) return;
-    var host = parkedOrRevealedHost();
-    if (!host) return;
-    var line = answerLine(middle);
-    if (!line) return;
-    // Drop inline geometry from the question conceal so Anki's .stattxt
-    // rule is what places the line. Do not center it on #middle.
+    var injected = injectedCountHost();
+    if (injected) {
+      releaseHost(injected);
+      removePark();
+      return;
+    }
+    var mounted = answerMountedHost();
+    if (mounted && hostHasCounts(mounted)) {
+      releaseHost(mounted);
+      return;
+    }
+    var host = parkedHost();
+    var parent = editButton();
+    if (!host || !parent) return;
     releaseHost(host);
-    if (host.parentNode !== line) line.appendChild(host);
+    host.style.setProperty("pointer-events", "none");
+    if (host.parentNode !== parent) parent.appendChild(host);
   }
 
   function unconcealMarked() {
@@ -343,23 +312,22 @@ _INSTALL_JS = r"""
     var button = document.getElementById("ansbut");
     if (freshQuestionHost()) {
       // This question's counts are already on Show Answer. Drop a parked
-      // host from the previous card instead of pasting it over them.
-      removeReveal();
+      // host and the previous answer's Edit mount instead of pasting over them.
+      dropAnswerMount();
       removePark();
       unconcealMarked();
       document.documentElement.removeAttribute("data-hcu-html");
       return;
     }
-    var park = document.getElementById("hcu-count-park");
-    var reveal = document.getElementById("hcu-count-reveal");
-    var host = (park && park.querySelector("span.stattxt")) ||
-      (reveal && reveal.querySelector("span.stattxt"));
+    var host = answerMountedHost() || parkedHost();
     if (host && button) {
       releaseHost(host);
+      host.style.removeProperty("pointer-events");
       if (host.parentNode !== button) button.appendChild(host);
+    } else {
+      dropAnswerMount();
     }
     unconcealMarked();
-    removeReveal();
     removePark();
     document.documentElement.removeAttribute("data-hcu-html");
   }
@@ -412,7 +380,6 @@ def bottom_bar_script(mode: str, *, apply: bool = True) -> str:
         .replace("__LEGACY_IDS__", json.dumps(list(LEGACY_COUNT_IDS)))
         .replace("__ANSWER_BUTTON_SELECTOR__", json.dumps(ANSWER_BUTTON_SELECTOR))
         .replace("__QUESTION_HOST_SELECTOR__", json.dumps(QUESTION_HOST_SELECTOR))
-        .replace("__ANSWER_ROW_HEIGHT__", json.dumps(ANSWER_ROW_HEIGHT))
     )
     setter = "__hcuSetMode" if apply else "__hcuSetModeOnly"
     return script + f"\nif (window.{setter}) window.{setter}({json.dumps(mode)});\n"

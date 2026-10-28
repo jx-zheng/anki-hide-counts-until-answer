@@ -87,6 +87,7 @@ const stock = readFileSync(process.argv[7], "utf8");
 const show = readFileSync(process.argv[8], "utf8");
 const modeOnlyStock = readFileSync(process.argv[9], "utf8");
 const modeOnlyShow = readFileSync(process.argv[10], "utf8");
+const modeOnlyHide = readFileSync(process.argv[11], "utf8");
 
 function page() {
   return new JSDOM(`<!doctype html><body>${shell}</body>`, {
@@ -127,35 +128,24 @@ function visible(host) {
   return true;
 }
 
+function editButton(doc) {
+  const buttons = [...doc.querySelectorAll("td.stat button")];
+  return buttons.find((button) => !button.querySelector("#time")) || null;
+}
+
 function assertAnswerCountsVisible(doc, label) {
-  const reveal = doc.getElementById("hcu-count-reveal");
-  if (!reveal) throw new Error(label + ": answer did not reveal counts");
-  if (reveal.parentElement !== doc.getElementById("middle")) {
-    throw new Error(label + ": reveal is not in the bottom bar");
+  if (doc.getElementById("hcu-count-reveal")) {
+    throw new Error(label + ": custom reveal overlay is back");
   }
-  if (reveal.style.position !== "relative") {
-    throw new Error(label + ": reveal is not the in-flow row: " + reveal.style.cssText);
+  if ([...doc.querySelectorAll("[style]")].some((node) => (node.getAttribute("style") || "").includes("20px"))) {
+    throw new Error(label + ": grow-row is back");
   }
-  if ((reveal.style.left || "").includes("50") || (reveal.style.top && parseFloat(reveal.style.top) > 0)) {
-    throw new Error(label + ": reveal is centered in the interval band: " + reveal.style.cssText);
-  }
-  const line = reveal.querySelector("[data-hcu-line]");
-  if (!line) throw new Error(label + ": missing stock anchor");
-  if ((line.style.left || "").includes("50") || line.style.top) {
-    throw new Error(label + ": anchor recenters on the ease buttons: " + line.style.cssText);
-  }
-  const ease = doc.querySelector("#middle button[data-ease]");
-  if (!ease) throw new Error(label + ": missing ease buttons");
-  const row = ease.closest("table") || ease;
-  // 4 is DOCUMENT_POSITION_FOLLOWING. Node is not a global in the runner.
-  const beforeButtons = (reveal.compareDocumentPosition(row) & 4) !== 0;
-  if (!beforeButtons) throw new Error(label + ": counts are not above the ease buttons");
-  if (reveal.querySelector("button[data-ease], .nobold")) {
-    throw new Error(label + ": reveal wraps interval labels");
-  }
-  const host = line.querySelector("span.stattxt");
-  if (!host || host.closest("button[data-ease]")) {
-    throw new Error(label + ": counts are mounted on an ease button");
+  const edit = editButton(doc);
+  if (!edit) throw new Error(label + ": Edit button missing");
+  const host = edit.querySelector(":scope > span.stattxt");
+  if (!host) throw new Error(label + ": counts are not a child of Edit");
+  if (host.closest("button[data-ease]")) {
+    throw new Error(label + ": counts are on an ease button");
   }
   if (!visible(host)) throw new Error(label + ": answer counts are not visible");
   if ((host.style.left || "").includes("50") || host.style.position === "static") {
@@ -164,6 +154,11 @@ function assertAnswerCountsVisible(doc, label) {
   const shown = host.querySelector(".learn-count u");
   if (!shown || shown.textContent !== "3") {
     throw new Error(label + ": answer lost the underline");
+  }
+  for (const nobold of doc.querySelectorAll(".nobold")) {
+    if (nobold.parentElement === host.parentElement) {
+      throw new Error(label + ": counts share a button with an interval label");
+    }
   }
   return host;
 }
@@ -241,6 +236,15 @@ run(flipped, modeOnlyShow);
 showQuestion(flipped, answer);
 await flush();
 assertAnswerCountsVisible(flipped.window.document, "showAnswer observer");
+run(flipped, modeOnlyHide);
+showQuestion(flipped, questionB);
+await flush();
+const nextFront = countHost(flipped.window.document);
+if (visible(nextFront)) throw new Error("next question still shows counts");
+const editAfter = editButton(flipped.window.document);
+if (editAfter && editAfter.querySelector(".new-count")) {
+  throw new Error("answer counts stuck on Edit");
+}
 
 const plain = page();
 showQuestion(plain, questionA);
@@ -268,7 +272,11 @@ if (plainDoc.querySelector("[data-hcu-concealed]")) {
   throw new Error("non-whitelist answer concealed a node");
 }
 if (plainDoc.getElementById("hcu-count-reveal")) {
-  throw new Error("non-whitelist answer injected counts");
+  throw new Error("non-whitelist answer injected a reveal");
+}
+const plainEdit = editButton(plainDoc);
+if (plainEdit && plainEdit.querySelector(".new-count")) {
+  throw new Error("non-whitelist answer mounted counts on Edit");
 }
 const plainEases = [...plainDoc.querySelectorAll("#middle button[data-ease]")];
 if (plainEases.map((button) => button.getAttribute("data-ease")).join(",") !== "1,2,3,4") {
@@ -312,6 +320,7 @@ def test_whitelisted_question_then_other_question_keeps_counts(tmp_path: Path) -
         "show.js": bottom_bar_script("show"),
         "mode-only-stock.js": bottom_bar_script("stock", apply=False),
         "mode-only-show.js": bottom_bar_script("show", apply=False),
+        "mode-only-hide.js": bottom_bar_script("hide", apply=False),
         "run.mjs": _NODE_RUNNER,
     }
     for name, contents in files.items():
@@ -334,6 +343,7 @@ def test_whitelisted_question_then_other_question_keeps_counts(tmp_path: Path) -
             str(tmp_path / "show.js"),
             str(tmp_path / "mode-only-stock.js"),
             str(tmp_path / "mode-only-show.js"),
+            str(tmp_path / "mode-only-hide.js"),
         ],
         check=True,
         cwd=tmp_path,

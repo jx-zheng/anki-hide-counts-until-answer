@@ -18,8 +18,13 @@ still concealed when some other bottom bar leaves them in the page.
 
 The question side conceals the live nodes (and parks the ``.stattxt`` host
 outside ``#middle`` so Anki's answer HTML does not destroy them). The answer
-side shows that host again with the same absolute placement as Anki's
-``.stattxt``, so the bottom bar does not grow. Stock mode puts a concealed
+side leaves that host parked, so the bottom bar stays at stock height and
+the ease-button intervals are untouched. The same markup is shown in the
+reviewer card webview, ``position: fixed`` and centered on the viewport's
+bottom edge. That edge is the top of the toolbar, so the line sits in the
+gap above the bar the way the question's ``.stattxt`` floats above Show
+Answer. Painting it inside the bottom document clips it (``body { overflow:
+hidden }``) or lands it on the interval labels. Stock mode puts a concealed
 host back into ``#ansbut`` when the watcher hid the next question early; it
 does not delete a question Anki just drew.
 """
@@ -42,12 +47,22 @@ QUESTION_HOST_SELECTOR = "#ansbut > span.stattxt"
 
 MODES: tuple[str, ...] = ("hide", "show", "stock")
 
-# Same offsets as ``.stattxt`` / ``.nobold`` in reviewer-bottom.scss.
-# Absolute, so the answer-side counts do not add a row to the bar.
-REVEAL_STYLE = (
-    "position:absolute;left:50%;top:-3px;transform:translate(-50%,-100%);"
-    "white-space:nowrap;pointer-events:none;z-index:5;font-size:small;"
+# Shown in the reviewer card webview, not the bottom bar. That viewport
+# already ends at the toolbar, so a small ``bottom`` is the gap above the
+# bar. ``left: 50%`` and ``translateX(-50%)`` match the centered Show Answer
+# counts. The line is not inside the bar, so it cannot cover ``.nobold``.
+ANSWER_OVERLAY_ID = "hcu-answer-counts"
+ANSWER_OVERLAY_STYLE = (
+    "position:fixed;left:50%;bottom:8px;transform:translateX(-50%);"
+    "z-index:1000;pointer-events:none;white-space:nowrap;font-size:small;"
     "font-weight:normal;text-align:center;margin:0;padding:0;"
+)
+# reviewer.css does not include card-counts.scss. These variables are set
+# on the card webview, same names as the bottom bar.
+ANSWER_COUNT_COLORS = (
+    "#hcu-answer-counts .new-count{color:var(--state-new)}"
+    "#hcu-answer-counts .learn-count{color:var(--state-learn)}"
+    "#hcu-answer-counts .review-count{color:var(--state-review)}"
 )
 
 
@@ -75,6 +90,43 @@ def should_restore_counts(new_state: str, old_state: str) -> bool:
     """True when the reviewer is being left, so a conceal cannot stick."""
 
     return old_state == "review" and new_state != "review"
+
+
+def card_overlay_script(html: str | None) -> str:
+    """JS for the reviewer card webview. Empty html removes the line.
+
+    The bottom-bar document cannot show this line: ``position: fixed`` there
+    is clipped by the toolbar webview. The card viewport's bottom edge is
+    the top of the toolbar.
+    """
+
+    payload = html if isinstance(html, str) else ""
+    return (
+        "(function(){\n"
+        f"  var id = {json.dumps(ANSWER_OVERLAY_ID)};\n"
+        "  var node = document.getElementById(id);\n"
+        f"  var html = {json.dumps(payload)};\n"
+        "  if (!html) {\n"
+        "    if (node) node.remove();\n"
+        "    return;\n"
+        "  }\n"
+        "  if (!node) {\n"
+        "    node = document.createElement('div');\n"
+        "    node.id = id;\n"
+        "    node.setAttribute('data-hcu', 'answer-counts');\n"
+        f"    node.style.cssText = {json.dumps(ANSWER_OVERLAY_STYLE)};\n"
+        "    (document.body || document.documentElement).appendChild(node);\n"
+        "  }\n"
+        "  var styleId = id + '-style';\n"
+        "  if (!document.getElementById(styleId)) {\n"
+        "    var style = document.createElement('style');\n"
+        "    style.id = styleId;\n"
+        f"    style.textContent = {json.dumps(ANSWER_COUNT_COLORS)};\n"
+        "    (document.head || document.documentElement).appendChild(style);\n"
+        "  }\n"
+        "  node.innerHTML = html;\n"
+        "})();\n"
+    )
 
 
 def review_side_for_show_kind(kind: str) -> str | None:
@@ -106,12 +158,12 @@ _INSTALL_JS = r"""
 
   function countHost() {
     var direct = document.querySelector(__QUESTION_HOST_SELECTOR__);
-    if (direct && !direct.closest("#hcu-count-reveal")) return direct;
+    if (direct) return direct;
     var spans = document.querySelectorAll("#middle span.stattxt");
     for (var i = 0; i < spans.length; i++) {
       var span = spans[i];
       if (span.id === "time") continue;
-      if (span.closest("#hcu-count-reveal")) continue;
+      if (span.closest("#hcu-count-park")) continue;
       return span;
     }
     return null;
@@ -131,7 +183,7 @@ _INSTALL_JS = r"""
     for (var i = 0; i < LEGACY_IDS.length; i++) {
       var node = document.getElementById(LEGACY_IDS[i]);
       if (!node) continue;
-      if (node.closest("#hcu-count-park, #hcu-count-reveal")) continue;
+      if (node.closest("#hcu-count-park")) continue;
       var host = countHost();
       if (host && host.contains(node)) continue;
       found.push(node);
@@ -170,11 +222,6 @@ _INSTALL_JS = r"""
     if (park) park.remove();
   }
 
-  function removeReveal() {
-    var reveal = document.getElementById("hcu-count-reveal");
-    if (reveal) reveal.remove();
-  }
-
   function remember(host) {
     if (host && host.innerHTML) {
       document.documentElement.setAttribute("data-hcu-html", host.innerHTML);
@@ -190,11 +237,9 @@ _INSTALL_JS = r"""
     park.appendChild(host);
   }
 
-  function parkedOrRevealedHost() {
+  function parkedHost() {
     var park = document.getElementById("hcu-count-park");
-    var revealed = document.getElementById("hcu-count-reveal");
-    var host = (park && park.querySelector("span.stattxt")) ||
-      (revealed && revealed.querySelector("span.stattxt"));
+    var host = park && park.querySelector("span.stattxt");
     if (host) return host;
     var html = document.documentElement.getAttribute("data-hcu-html") || "";
     if (!html) return null;
@@ -204,10 +249,15 @@ _INSTALL_JS = r"""
     return host;
   }
 
+  function forgetCounts() {
+    document.documentElement.removeAttribute("data-hcu-html");
+    removePark();
+  }
+
   function hideCounts() {
-    removeReveal();
     var host = countHost();
     if (host && hostHasCounts(host)) parkHost(host);
+    else if (host) forgetCounts();
     var legacy = legacyOutside();
     for (var i = 0; i < legacy.length; i++) conceal(legacy[i]);
   }
@@ -243,7 +293,7 @@ _INSTALL_JS = r"""
   function hostIsConcealed(host) {
     if (!host) return false;
     if (host.getAttribute("data-hcu-concealed") === "1") return true;
-    if (host.closest("#hcu-count-park, #hcu-count-reveal")) return true;
+    if (host.closest("#hcu-count-park")) return true;
     return host.style.getPropertyValue("visibility") === "hidden";
   }
 
@@ -254,40 +304,13 @@ _INSTALL_JS = r"""
     return live;
   }
 
-  function placeLikeStattxt(host) {
-    unconceal(host);
-    host.style.setProperty("position", "static", "important");
-    host.style.setProperty("transform", "none", "important");
-    host.style.setProperty("top", "auto", "important");
-    host.style.setProperty("left", "auto", "important");
-    host.style.setProperty("display", "inline", "important");
-    host.style.setProperty("visibility", "visible", "important");
-    host.style.setProperty("white-space", "nowrap", "important");
-    host.style.setProperty("font-size", "small", "important");
-    host.style.setProperty("font-weight", "normal", "important");
-  }
-
   function showCounts() {
+    // The parked host stays out of the bar. The card webview draws the line
+    // centered in the gap above the toolbar.
     var legacy = legacyOutside();
     if (legacy.length && answerIsShown()) {
       for (var i = 0; i < legacy.length; i++) unconceal(legacy[i]);
     }
-    if (!answerIsShown()) return;
-    var middle = document.getElementById("middle");
-    if (!middle) return;
-    var host = parkedOrRevealedHost();
-    if (!host) return;
-    if (!middle.style.position) middle.style.position = "relative";
-    var reveal = document.getElementById("hcu-count-reveal");
-    if (!reveal) {
-      reveal = document.createElement("div");
-      reveal.id = "hcu-count-reveal";
-      reveal.setAttribute("data-hcu", "counts");
-      reveal.style.cssText = __REVEAL_STYLE__;
-      middle.appendChild(reveal);
-    }
-    placeLikeStattxt(host);
-    if (host.parentNode !== reveal) reveal.appendChild(host);
   }
 
   function unconcealMarked() {
@@ -300,22 +323,17 @@ _INSTALL_JS = r"""
     if (freshQuestionHost()) {
       // This question's counts are already on Show Answer. Drop a parked
       // host from the previous card instead of pasting it over them.
-      removeReveal();
       removePark();
       unconcealMarked();
       document.documentElement.removeAttribute("data-hcu-html");
       return;
     }
-    var park = document.getElementById("hcu-count-park");
-    var reveal = document.getElementById("hcu-count-reveal");
-    var host = (park && park.querySelector("span.stattxt")) ||
-      (reveal && reveal.querySelector("span.stattxt"));
+    var host = parkedHost();
     if (host && button) {
       releaseHost(host);
       if (host.parentNode !== button) button.appendChild(host);
     }
     unconcealMarked();
-    removeReveal();
     removePark();
     document.documentElement.removeAttribute("data-hcu-html");
   }
@@ -368,7 +386,6 @@ def bottom_bar_script(mode: str, *, apply: bool = True) -> str:
         .replace("__LEGACY_IDS__", json.dumps(list(LEGACY_COUNT_IDS)))
         .replace("__ANSWER_BUTTON_SELECTOR__", json.dumps(ANSWER_BUTTON_SELECTOR))
         .replace("__QUESTION_HOST_SELECTOR__", json.dumps(QUESTION_HOST_SELECTOR))
-        .replace("__REVEAL_STYLE__", json.dumps(REVEAL_STYLE))
     )
     setter = "__hcuSetMode" if apply else "__hcuSetModeOnly"
     return script + f"\nif (window.{setter}) window.{setter}({json.dumps(mode)});\n"

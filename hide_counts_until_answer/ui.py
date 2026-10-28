@@ -18,6 +18,7 @@ from .allowlist import (
 )
 from .counts_dom import (
     bottom_bar_script,
+    card_overlay_script,
     review_side_for_show_kind,
     should_restore_counts,
     visibility_for,
@@ -77,6 +78,7 @@ def on_card_will_show(text: str, card: Any, kind: str) -> str:
 
 
 def on_show_question(card: Any, *_args: Any) -> None:
+    _clear_answer_overlay()
     _on_review_side(card, "question")
     if _applied == "hide":
         _schedule_retry(card, "question", "hide")
@@ -86,14 +88,17 @@ def on_show_answer(card: Any, *_args: Any) -> None:
     _on_review_side(card, "answer")
     if _applied == "show":
         _schedule_retry(card, "answer", "show")
+        _publish_answer_counts(getattr(card, "id", None))
 
 
 def on_reviewer_will_end(*_args: Any) -> None:
+    _clear_answer_overlay()
     _apply_mode("stock")
 
 
 def on_state_change(new_state: str, old_state: str, *_args: Any) -> None:
     if should_restore_counts(new_state, old_state):
+        _clear_answer_overlay()
         _apply_mode("stock")
 
 
@@ -176,6 +181,54 @@ def _apply_mode(mode: str) -> None:
     _eval_bottom(bottom_bar_script(mode))
 
 
+_COUNT_HTML_JS = 'document.documentElement.getAttribute("data-hcu-html") || ""'
+
+
+def _publish_answer_counts(card_id: Any) -> None:
+    """Copy the parked count markup into the card webview, above the toolbar."""
+
+    web = _bottom_web()
+    if web is None or not hasattr(web, "evalWithCallback"):
+        return
+
+    def on_html(html: Any) -> None:
+        if _applied != "show" or not _still_on_side(card_id, "answer"):
+            return
+        if not isinstance(html, str) or not html.strip():
+            _clear_answer_overlay()
+            return
+        _eval_reviewer(card_overlay_script(html))
+
+    try:
+        web.evalWithCallback(_COUNT_HTML_JS, on_html)
+    except Exception:
+        logger.debug("could not read parked counts", exc_info=True)
+
+
+def _clear_answer_overlay() -> None:
+    _eval_reviewer(card_overlay_script(None))
+
+
+def _eval_reviewer(script: str) -> None:
+    web = _reviewer_web()
+    if web is None:
+        return
+    try:
+        web.eval(script)
+    except Exception:
+        logger.debug("card overlay eval failed", exc_info=True)
+
+
+def _reviewer_web() -> Any:
+    from aqt import mw
+
+    reviewer = getattr(mw, "reviewer", None)
+    web = getattr(reviewer, "web", None) if reviewer is not None else None
+    if web is not None:
+        return web
+    return getattr(mw, "web", None)
+
+
 def _eval_bottom(script: str) -> None:
     web = _bottom_web()
     if web is None:
@@ -206,6 +259,8 @@ def _schedule_retry(card: Any, side: str, mode: str) -> None:
         if _applied != mode or not _still_on_side(card_id, side):
             return
         _eval_bottom(bottom_bar_script(mode))
+        if mode == "show":
+            _publish_answer_counts(card_id)
 
     _single_shot(80 if side == "answer" else 50, retry)
 

@@ -86,6 +86,7 @@ const hide = readFileSync(process.argv[6], "utf8");
 const stock = readFileSync(process.argv[7], "utf8");
 const show = readFileSync(process.argv[8], "utf8");
 const modeOnlyStock = readFileSync(process.argv[9], "utf8");
+const modeOnlyShow = readFileSync(process.argv[10], "utf8");
 
 function page() {
   return new JSDOM(`<!doctype html><body>${shell}</body>`, {
@@ -120,9 +121,34 @@ function countHost(doc) {
 
 function visible(host) {
   if (!host) return false;
+  if (host.closest("#hcu-count-park")) return false;
   if (host.getAttribute("data-hcu-concealed") === "1") return false;
   if (host.style.getPropertyValue("visibility") === "hidden") return false;
   return true;
+}
+
+function assertAnswerCountsVisible(doc, label) {
+  const reveal = doc.getElementById("hcu-count-reveal");
+  if (!reveal) throw new Error(label + ": answer did not reveal counts");
+  if (reveal.style.position !== "absolute") {
+    throw new Error(label + ": reveal is not absolute: " + reveal.style.cssText);
+  }
+  if (reveal.style.padding && reveal.style.padding !== "0px") {
+    throw new Error(label + ": reveal padding grows the bar: " + reveal.style.padding);
+  }
+  const top = parseFloat(reveal.style.top);
+  if (!(top > 0)) {
+    throw new Error(label + ": counts are placed above the bar: " + reveal.style.cssText);
+  }
+  const host = reveal.querySelector("span.stattxt");
+  if (!visible(host)) {
+    throw new Error(label + ": answer counts are not visible");
+  }
+  const shown = host.querySelector(".learn-count u");
+  if (!shown || shown.textContent !== "3") {
+    throw new Error(label + ": answer lost the underline");
+  }
+  return host;
 }
 
 const whitelisted = page();
@@ -174,23 +200,62 @@ const answered = page();
 showQuestion(answered, questionA);
 run(answered, hide);
 await flush();
+const hiddenOnFront = countHost(answered.window.document);
+if (hiddenOnFront) {
+  throw new Error("whitelisted question still has counts on Show Answer");
+}
 showQuestion(answered, answer);
 await flush();
 run(answered, show);
 await flush();
-const reveal = answered.window.document.getElementById("hcu-count-reveal");
-if (!reveal) throw new Error("answer did not reveal counts");
-if (reveal.style.position !== "absolute") {
-  throw new Error("reveal is not absolute: " + reveal.style.cssText);
-}
-if (reveal.style.padding && reveal.style.padding !== "0px") {
-  throw new Error("reveal padding grows the bar: " + reveal.style.padding);
-}
-const shown = reveal.querySelector(".learn-count u");
-if (!shown || shown.textContent !== "3") throw new Error("answer lost the underline");
+assertAnswerCountsVisible(answered.window.document, "show after flip");
 const buttons = [...answered.window.document.querySelectorAll("#middle button[data-ease]")];
 if (buttons.map((button) => button.getAttribute("data-ease")).join(",") !== "1,2,3,4") {
   throw new Error("ease buttons changed");
+}
+
+// card_will_show sets the mode before Anki replaces #middle. The watcher
+// must reveal on that replacement, which is showAnswer.
+const flipped = page();
+showQuestion(flipped, questionA);
+run(flipped, hide);
+await flush();
+run(flipped, modeOnlyShow);
+showQuestion(flipped, answer);
+await flush();
+assertAnswerCountsVisible(flipped.window.document, "showAnswer observer");
+
+const plain = page();
+showQuestion(plain, questionA);
+const untouched = countHost(plain.window.document);
+if (!visible(untouched)) throw new Error("stock question is missing counts");
+if (untouched.querySelector(".learn-count u").textContent !== "3") {
+  throw new Error("stock question counts changed before the add-on ran");
+}
+run(plain, stock);
+await flush();
+const stockHost = countHost(plain.window.document);
+if (!visible(stockHost)) throw new Error("non-whitelist question hid counts");
+if (stockHost.querySelector(".learn-count u").textContent !== "3") {
+  throw new Error("non-whitelist counts changed: " + stockHost.innerHTML);
+}
+if (plain.window.document.getElementById("hcu-count-park")) {
+  throw new Error("non-whitelist question parked counts");
+}
+showQuestion(plain, answer);
+await flush();
+run(plain, stock);
+await flush();
+const plainDoc = plain.window.document;
+if (plainDoc.querySelector("[data-hcu-concealed]")) {
+  throw new Error("non-whitelist answer concealed a node");
+}
+if (plainDoc.getElementById("hcu-count-reveal")) {
+  throw new Error("non-whitelist answer injected counts");
+}
+const plainEases = [...plainDoc.querySelectorAll("#middle button[data-ease]")];
+if (plainEases.map((button) => button.getAttribute("data-ease")).join(",") !== "1,2,3,4") {
+  throw new Error("non-whitelist ease buttons changed");
 }
 console.log("bottom bar regression ok");
 """
@@ -229,6 +294,7 @@ def test_whitelisted_question_then_other_question_keeps_counts(tmp_path: Path) -
         "stock.js": bottom_bar_script("stock"),
         "show.js": bottom_bar_script("show"),
         "mode-only-stock.js": bottom_bar_script("stock", apply=False),
+        "mode-only-show.js": bottom_bar_script("show", apply=False),
         "run.mjs": _NODE_RUNNER,
     }
     for name, contents in files.items():
@@ -250,6 +316,7 @@ def test_whitelisted_question_then_other_question_keeps_counts(tmp_path: Path) -
             str(tmp_path / "stock.js"),
             str(tmp_path / "show.js"),
             str(tmp_path / "mode-only-stock.js"),
+            str(tmp_path / "mode-only-show.js"),
         ],
         check=True,
         cwd=tmp_path,

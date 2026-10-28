@@ -19,7 +19,7 @@ That block sits in `#ansbut > span.stattxt`, above **Show Answer**. The current 
 Showing the answer replaces `#middle` with the ease buttons (`button[data-ease]`), so those nodes would otherwise disappear. On a whitelisted deck this add-on:
 
 1. Conceals the live count nodes on the question (`visibility: hidden`) and parks that `.stattxt` host outside `#middle`, so the answer render does not destroy it.
-2. After the answer is shown, puts that same host back with the same absolute placement as Anki's `.stattxt`, so the bottom bar does not grow and stay tall.
+2. After the answer is shown, puts that same host back, absolutely positioned against the ease-button border the way Anki's `.stattxt` is. The bottom bar does not grow. The line stays inside the bar (`body` clips overflow), so the counts are visible again.
 3. If the next card is not allowlisted, puts any counts the watcher already hid back onto **Show Answer** instead of deleting them.
 
 `#new`, `#lrn`, and `#rev` are not in the 25.09+ reviewer. If a bottom bar still has them, they are concealed on the question and shown again on the answer. The ease buttons themselves are not rewritten, and the bottom bar HTML is not replaced.

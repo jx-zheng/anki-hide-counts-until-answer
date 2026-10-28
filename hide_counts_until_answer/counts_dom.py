@@ -18,10 +18,13 @@ still concealed when some other bottom bar leaves them in the page.
 
 The question side conceals the live nodes (and parks the ``.stattxt`` host
 outside ``#middle`` so Anki's answer HTML does not destroy them). The answer
-side shows that host again with the same absolute placement as Anki's
-``.stattxt``, so the bottom bar does not grow. Stock mode puts a concealed
-host back into ``#ansbut`` when the watcher hid the next question early; it
-does not delete a question Anki just drew.
+side shows that host again, absolutely positioned against the ease-button
+border the way ``.stattxt`` is (``top: -3px`` and ``translateY(-100%)``).
+Anchoring those offsets to the top of ``#middle`` paints the line above the
+bar; ``toolbar-bottom.scss`` sets ``body { overflow: hidden }``, so the
+counts stay invisible after Show Answer. The bar does not grow. Stock mode
+puts a concealed host back into ``#ansbut`` when the watcher hid the next
+question early; it does not delete a question Anki just drew.
 """
 
 from __future__ import annotations
@@ -42,13 +45,23 @@ QUESTION_HOST_SELECTOR = "#ansbut > span.stattxt"
 
 MODES: tuple[str, ...] = ("hide", "show", "stock")
 
-# Same offsets as ``.stattxt`` / ``.nobold`` in reviewer-bottom.scss.
-# Absolute, so the answer-side counts do not add a row to the bar.
+# Horizontal placement matches ``.stattxt`` / ``.nobold`` in
+# reviewer-bottom.scss. ``top`` is set in the page, against the ease-button
+# border, so the line stays inside the fixed-height bar. Absolute, so the
+# answer-side counts do not add a row.
 REVEAL_STYLE = (
-    "position:absolute;left:50%;top:-3px;transform:translate(-50%,-100%);"
+    "position:absolute;left:50%;transform:translate(-50%,-100%);"
     "white-space:nowrap;pointer-events:none;z-index:5;font-size:small;"
     "font-weight:normal;text-align:center;margin:0;padding:0;"
 )
+
+# reviewer-bottom.scss: ``#middle td[align=center]`` padding-top is 10px and
+# ``button`` margin is 9px. Used when the bottom bar has not been laid out
+# yet and the button's border offset measures as 0.
+BUTTON_BORDER_FALLBACK = 19
+
+# ``.stattxt`` uses ``top: -3px`` from the button border.
+STATTXT_ABOVE_BUTTON = 3
 
 
 def count_class_selector() -> str:
@@ -267,6 +280,14 @@ _INSTALL_JS = r"""
     host.style.setProperty("font-weight", "normal", "important");
   }
 
+  function easeButtonBorderTop(anchor) {
+    var button = document.querySelector(ANSWER_BUTTON_SELECTOR);
+    if (!button) return __BUTTON_BORDER_FALLBACK__;
+    var delta = button.getBoundingClientRect().top - anchor.getBoundingClientRect().top;
+    if (delta > 1) return Math.round(delta);
+    return __BUTTON_BORDER_FALLBACK__;
+  }
+
   function showCounts() {
     var legacy = legacyOutside();
     if (legacy.length && answerIsShown()) {
@@ -286,6 +307,11 @@ _INSTALL_JS = r"""
       reveal.style.cssText = __REVEAL_STYLE__;
       middle.appendChild(reveal);
     }
+    // Bottom of the line sits a few pixels above the ease buttons, then
+    // translateY(-100%) lifts the text into the padding Anki already
+    // reserves there. A negative top on #middle is above the webview, and
+    // body { overflow: hidden } keeps it invisible.
+    reveal.style.top = (easeButtonBorderTop(middle) - __STATTXT_ABOVE_BUTTON__) + "px";
     placeLikeStattxt(host);
     if (host.parentNode !== reveal) reveal.appendChild(host);
   }
@@ -369,6 +395,8 @@ def bottom_bar_script(mode: str, *, apply: bool = True) -> str:
         .replace("__ANSWER_BUTTON_SELECTOR__", json.dumps(ANSWER_BUTTON_SELECTOR))
         .replace("__QUESTION_HOST_SELECTOR__", json.dumps(QUESTION_HOST_SELECTOR))
         .replace("__REVEAL_STYLE__", json.dumps(REVEAL_STYLE))
+        .replace("__BUTTON_BORDER_FALLBACK__", json.dumps(BUTTON_BORDER_FALLBACK))
+        .replace("__STATTXT_ABOVE_BUTTON__", json.dumps(STATTXT_ABOVE_BUTTON))
     )
     setter = "__hcuSetMode" if apply else "__hcuSetModeOnly"
     return script + f"\nif (window.{setter}) window.{setter}({json.dumps(mode)});\n"

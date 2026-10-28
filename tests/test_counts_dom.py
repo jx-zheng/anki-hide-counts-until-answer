@@ -62,6 +62,8 @@ def test_answer_counts_are_absolute_and_stock_puts_them_back() -> None:
     script = bottom_bar_script("show")
     assert "position:absolute" in script
     assert REVEAL_STYLE in script
+    assert "top:-3px" not in script
+    assert "getBoundingClientRect" in script
     assert "scrollHeight" not in script
     assert "padding:2px 8px 12px" not in script
     mode_only = bottom_bar_script("stock", apply=False)

@@ -21,6 +21,7 @@ class _Hook:
 
 class _Hooks:
     def __init__(self) -> None:
+        self.card_will_show = _Hook()
         self.reviewer_did_show_question = _Hook()
         self.reviewer_did_show_answer = _Hook()
         self.reviewer_will_end = _Hook()
@@ -36,12 +37,22 @@ def test_package_imports_without_aqt() -> None:
 def test_install_hooks_registers_each_entry_point() -> None:
     hooks = _Hooks()
     ui.install_hooks(hooks)
+    assert hooks.card_will_show.callbacks == [ui.on_card_will_show]
     assert hooks.reviewer_did_show_question.callbacks == [ui.on_show_question]
     assert hooks.reviewer_did_show_answer.callbacks == [ui.on_show_answer]
     assert hooks.reviewer_will_end.callbacks == [ui.on_reviewer_will_end]
     assert hooks.state_did_change.callbacks == [ui.on_state_change]
     assert hooks.profile_will_close.callbacks == [ui.on_profile_will_close]
     assert hooks.main_window_did_init.callbacks == [ui.on_main_window]
+
+
+def test_card_will_show_returns_card_html_unchanged() -> None:
+    html = "<div id=qa>front</div>"
+    ui._applied = "stock"
+    assert ui.on_card_will_show(html, object(), "previewQuestion") == html
+    assert ui.on_card_will_show(html, object(), "reviewQuestion") == html
+    assert ui.on_card_will_show(html, object(), "reviewAnswer") == html
+    assert ui._applied == "stock"
 
 
 def test_tools_action_mentions_choose_decks() -> None:

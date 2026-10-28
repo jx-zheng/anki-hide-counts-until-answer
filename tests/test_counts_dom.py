@@ -6,12 +6,11 @@ from hide_counts_until_answer.counts_dom import (
     ANSWER_BUTTON_SELECTOR,
     COUNT_CLASSES,
     LEGACY_COUNT_IDS,
-    MIN_BOTTOM_BAR_HEIGHT,
     QUESTION_HOST_SELECTOR,
-    acceptable_bottom_height,
+    REVEAL_STYLE,
     bottom_bar_script,
-    bottom_height_script,
     count_class_selector,
+    review_side_for_show_kind,
     should_restore_counts,
     visibility_for,
 )
@@ -52,22 +51,23 @@ def test_script_uses_verified_selectors_and_does_not_drive_scheduling() -> None:
     assert "middle.innerHTML" not in script
     assert "outer.innerHTML" not in script
     assert "pycmd" not in script
-    assert "ease" not in script.replace(ANSWER_BUTTON_SELECTOR, "")
+    assert "ease1" not in script
+    assert ANSWER_BUTTON_SELECTOR not in script.replace(ANSWER_BUTTON_SELECTOR, "", 1)
     for mode in ("show", "stock"):
         assert f'window.__hcuSetMode("{mode}")' in bottom_bar_script(mode)
     assert 'window.__hcuSetMode("stock")' in bottom_bar_script("nope")
 
 
-def test_height_script_reads_content_and_rejects_collapsed_measurements() -> None:
-    script = bottom_height_script()
-    assert "scrollHeight" in script
-    assert "pycmd" not in script
-    assert acceptable_bottom_height(None) is None
-    assert acceptable_bottom_height(True) is None
-    assert acceptable_bottom_height(1) is None
-    assert acceptable_bottom_height(MIN_BOTTOM_BAR_HEIGHT - 1) is None
-    assert acceptable_bottom_height(MIN_BOTTOM_BAR_HEIGHT) == MIN_BOTTOM_BAR_HEIGHT
-    assert acceptable_bottom_height(80.2) == 80
-    assert acceptable_bottom_height("72") == 72
-    assert acceptable_bottom_height("1") is None
-    assert acceptable_bottom_height("tall") is None
+def test_answer_counts_are_absolute_and_stock_puts_them_back() -> None:
+    script = bottom_bar_script("show")
+    assert "position:absolute" in script
+    assert REVEAL_STYLE in script
+    assert "scrollHeight" not in script
+    assert "padding:2px 8px 12px" not in script
+    mode_only = bottom_bar_script("stock", apply=False)
+    assert 'window.__hcuSetModeOnly("stock")' in mode_only
+    assert 'window.__hcuSetMode("stock")' not in mode_only
+    assert review_side_for_show_kind("reviewQuestion") == "question"
+    assert review_side_for_show_kind("reviewAnswer") == "answer"
+    assert review_side_for_show_kind("previewQuestion") is None
+    assert review_side_for_show_kind("clayoutAnswer") is None

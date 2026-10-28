@@ -18,8 +18,10 @@ still concealed when some other bottom bar leaves them in the page.
 
 The question side conceals the live nodes (and parks the ``.stattxt`` host
 outside ``#middle`` so Anki's answer HTML does not destroy them). The answer
-side moves that same host back into view above the ease buttons. Stock mode
-drops only the nodes this add-on created.
+side shows that host again with the same absolute placement as Anki's
+``.stattxt``, so the bottom bar does not grow. Stock mode puts a concealed
+host back into ``#ansbut`` when the watcher hid the next question early; it
+does not delete a question Anki just drew.
 """
 
 from __future__ import annotations
@@ -40,9 +42,13 @@ QUESTION_HOST_SELECTOR = "#ansbut > span.stattxt"
 
 MODES: tuple[str, ...] = ("hide", "show", "stock")
 
-# Ignore a collapsed measurement. Anki has a known path where offsetHeight
-# is 1 during reflow; applying that would squash the bottom bar.
-MIN_BOTTOM_BAR_HEIGHT = 48
+# Same offsets as ``.stattxt`` / ``.nobold`` in reviewer-bottom.scss.
+# Absolute, so the answer-side counts do not add a row to the bar.
+REVEAL_STYLE = (
+    "position:absolute;left:50%;top:-3px;transform:translate(-50%,-100%);"
+    "white-space:nowrap;pointer-events:none;z-index:5;font-size:small;"
+    "font-weight:normal;text-align:center;margin:0;padding:0;"
+)
 
 
 def count_class_selector() -> str:
@@ -71,34 +77,24 @@ def should_restore_counts(new_state: str, old_state: str) -> bool:
     return old_state == "review" and new_state != "review"
 
 
-def acceptable_bottom_height(measured: object) -> int | None:
-    """Pixel height worth applying, or None to leave the bar alone.
+def review_side_for_show_kind(kind: str) -> str | None:
+    """Map ``card_will_show`` kind to a reviewer side.
 
-    A measurement taken mid-reflow can be 0 or 1. Applying that would
-    collapse the reviewer bottom bar, so anything under
-    ``MIN_BOTTOM_BAR_HEIGHT`` is ignored.
+    Preview and card-layout kinds are not the reviewer bottom bar.
     """
 
-    if isinstance(measured, bool):
-        return None
-    if isinstance(measured, str):
-        text = measured.strip()
-        if not text.isdigit():
-            return None
-        value = int(text)
-    else:
-        try:
-            value = int(measured)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return None
-    if value < MIN_BOTTOM_BAR_HEIGHT:
-        return None
-    return value
+    if kind == "reviewQuestion":
+        return "question"
+    if kind == "reviewAnswer":
+        return "answer"
+    return None
 
 
-# Installed once per bottom-bar document. ``__hcuSetMode`` is called on
-# every question and answer. A MutationObserver reapplies after Anki
-# replaces ``#middle`` (including the delayed ease-button render).
+# Installed once per bottom-bar document. ``__hcuSetMode`` applies it.
+# ``__hcuSetModeOnly`` updates the flag the watcher reads and does not
+# touch the DOM, so it can run before Anki replaces ``#middle``.
+# A MutationObserver reapplies after that replacement (including the
+# delayed ease-button render).
 _INSTALL_JS = r"""
 (function () {
   if (window.__hcuInstalled) return;
@@ -220,18 +216,55 @@ _INSTALL_JS = r"""
     return !!document.querySelector(ANSWER_BUTTON_SELECTOR);
   }
 
-  function placeInFlow(host) {
+  function releaseHost(host) {
+    unconceal(host);
+    host.style.removeProperty("position");
+    host.style.removeProperty("transform");
+    host.style.removeProperty("top");
+    host.style.removeProperty("left");
+    host.style.removeProperty("display");
+    host.style.removeProperty("text-align");
+    host.style.removeProperty("white-space");
+    host.style.removeProperty("font-size");
+    host.style.removeProperty("font-weight");
+    host.style.removeProperty("visibility");
+  }
+
+  function directCountHost(button) {
+    if (!button) return null;
+    var kids = button.children;
+    for (var i = 0; i < kids.length; i++) {
+      var child = kids[i];
+      if (child.tagName === "SPAN" && child.classList.contains("stattxt")) return child;
+    }
+    return null;
+  }
+
+  function hostIsConcealed(host) {
+    if (!host) return false;
+    if (host.getAttribute("data-hcu-concealed") === "1") return true;
+    if (host.closest("#hcu-count-park, #hcu-count-reveal")) return true;
+    return host.style.getPropertyValue("visibility") === "hidden";
+  }
+
+  // Anki just painted this question and the watcher has not taken its counts.
+  function freshQuestionHost() {
+    var live = directCountHost(document.getElementById("ansbut"));
+    if (!live || hostIsConcealed(live)) return null;
+    return live;
+  }
+
+  function placeLikeStattxt(host) {
     unconceal(host);
     host.style.setProperty("position", "static", "important");
     host.style.setProperty("transform", "none", "important");
     host.style.setProperty("top", "auto", "important");
     host.style.setProperty("left", "auto", "important");
-    host.style.setProperty("display", "block", "important");
-    host.style.setProperty("text-align", "center", "important");
+    host.style.setProperty("display", "inline", "important");
+    host.style.setProperty("visibility", "visible", "important");
     host.style.setProperty("white-space", "nowrap", "important");
     host.style.setProperty("font-size", "small", "important");
     host.style.setProperty("font-weight", "normal", "important");
-    host.style.setProperty("visibility", "visible", "important");
   }
 
   function showCounts() {
@@ -244,21 +277,44 @@ _INSTALL_JS = r"""
     if (!middle) return;
     var host = parkedOrRevealedHost();
     if (!host) return;
+    if (!middle.style.position) middle.style.position = "relative";
     var reveal = document.getElementById("hcu-count-reveal");
     if (!reveal) {
       reveal = document.createElement("div");
       reveal.id = "hcu-count-reveal";
       reveal.setAttribute("data-hcu", "counts");
-      reveal.style.cssText = "text-align:center;padding:2px 8px 12px;pointer-events:none;-webkit-user-select:none;user-select:none;";
-      middle.insertBefore(reveal, middle.firstChild);
+      reveal.style.cssText = __REVEAL_STYLE__;
+      middle.appendChild(reveal);
     }
-    placeInFlow(host);
+    placeLikeStattxt(host);
     if (host.parentNode !== reveal) reveal.appendChild(host);
   }
 
-  function restoreCounts() {
+  function unconcealMarked() {
     var nodes = document.querySelectorAll("[data-hcu-concealed]");
     for (var i = 0; i < nodes.length; i++) unconceal(nodes[i]);
+  }
+
+  function restoreCounts() {
+    var button = document.getElementById("ansbut");
+    if (freshQuestionHost()) {
+      // This question's counts are already on Show Answer. Drop a parked
+      // host from the previous card instead of pasting it over them.
+      removeReveal();
+      removePark();
+      unconcealMarked();
+      document.documentElement.removeAttribute("data-hcu-html");
+      return;
+    }
+    var park = document.getElementById("hcu-count-park");
+    var reveal = document.getElementById("hcu-count-reveal");
+    var host = (park && park.querySelector("span.stattxt")) ||
+      (reveal && reveal.querySelector("span.stattxt"));
+    if (host && button) {
+      releaseHost(host);
+      if (host.parentNode !== button) button.appendChild(host);
+    }
+    unconcealMarked();
     removeReveal();
     removePark();
     document.documentElement.removeAttribute("data-hcu-html");
@@ -281,17 +337,29 @@ _INSTALL_JS = r"""
     middle.__hcuObserved = true;
   };
 
-  window.__hcuSetMode = function (mode) {
-    window.__hcuMode = mode === "hide" || mode === "show" ? mode : "stock";
+  function normalizeMode(mode) {
+    return mode === "hide" || mode === "show" ? mode : "stock";
+  }
+
+  window.__hcuSetModeOnly = function (mode) {
+    window.__hcuMode = normalizeMode(mode);
     window.__hcuEnsureObserver();
+  };
+
+  window.__hcuSetMode = function (mode) {
+    window.__hcuSetModeOnly(mode);
     window.__hcuApply();
   };
 })();
 """
 
 
-def bottom_bar_script(mode: str) -> str:
-    """JS that installs the conceal/show helpers and applies ``mode``."""
+def bottom_bar_script(mode: str, *, apply: bool = True) -> str:
+    """JS that installs the conceal/show helpers and sets ``mode``.
+
+    ``apply=False`` only updates the flag the watcher reads. ``card_will_show``
+    uses that so the flag is already correct when Anki replaces ``#middle``.
+    """
 
     if mode not in MODES:
         mode = "stock"
@@ -300,28 +368,7 @@ def bottom_bar_script(mode: str) -> str:
         .replace("__LEGACY_IDS__", json.dumps(list(LEGACY_COUNT_IDS)))
         .replace("__ANSWER_BUTTON_SELECTOR__", json.dumps(ANSWER_BUTTON_SELECTOR))
         .replace("__QUESTION_HOST_SELECTOR__", json.dumps(QUESTION_HOST_SELECTOR))
+        .replace("__REVEAL_STYLE__", json.dumps(REVEAL_STYLE))
     )
-    return script + f"\nif (window.__hcuSetMode) window.__hcuSetMode({json.dumps(mode)});\n"
-
-
-def bottom_height_script() -> str:
-    """Measure the bottom document after a count line is added or removed.
-
-    Uses scroll height so a fixed webview viewport does not report the old
-    widget size. Does not touch buttons or call back into Python.
-    """
-
-    return """
-(function () {
-  var root = document.documentElement;
-  if (!root) return 0;
-  if (document.body) document.body.style.setProperty("min-height", "0px");
-  var scroll = root.scrollHeight || 0;
-  var bodyScroll = (document.body && document.body.scrollHeight) || 0;
-  var offset = root.offsetHeight || 0;
-  var value = scroll;
-  if (bodyScroll > value) value = bodyScroll;
-  if (offset > value) value = offset;
-  return value;
-})()
-"""
+    setter = "__hcuSetMode" if apply else "__hcuSetModeOnly"
+    return script + f"\nif (window.{setter}) window.{setter}({json.dumps(mode)});\n"

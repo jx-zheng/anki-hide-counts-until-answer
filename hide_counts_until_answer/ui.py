@@ -17,9 +17,8 @@ from .allowlist import (
     normalize_config,
 )
 from .counts_dom import (
-    acceptable_bottom_height,
     bottom_bar_script,
-    bottom_height_script,
+    review_side_for_show_kind,
     should_restore_counts,
     visibility_for,
 )
@@ -35,13 +34,15 @@ HELP_TEXT = (
     "Filtered decks such as Free Review follow the card's home deck."
 )
 
-# "stock" until a whitelisted card is shown, so other decks are never touched.
+# Last mode actually applied to the bottom bar. "stock" means this session
+# has not concealed anything, so other decks are not touched.
 _applied = "stock"
 _menu_ready = False
-_refit_pending = False
 
 
 def install_hooks(gui_hooks: Any) -> None:
+    # Before Anki replaces #middle. Filter hook: return the card HTML unchanged.
+    gui_hooks.card_will_show.append(on_card_will_show)
     gui_hooks.reviewer_did_show_question.append(on_show_question)
     gui_hooks.reviewer_did_show_answer.append(on_show_answer)
     gui_hooks.reviewer_will_end.append(on_reviewer_will_end)
@@ -55,6 +56,24 @@ def install_hooks(gui_hooks: Any) -> None:
             on_main_window()
     except Exception:
         logger.debug("main window is not ready for the deck checklist", exc_info=True)
+
+
+def on_card_will_show(text: str, card: Any, kind: str) -> str:
+    """Set the watcher mode before the bottom bar redraws. Card HTML is unchanged."""
+
+    side = review_side_for_show_kind(kind)
+    if side is None:
+        return text
+    try:
+        allowlisted = _card_allowlisted(card)
+    except Exception:
+        logger.debug("allowlist lookup failed", exc_info=True)
+        allowlisted = False
+    try:
+        _queue_mode_only(visibility_for(side, allowlisted))
+    except Exception:
+        logger.debug("count mode update failed", exc_info=True)
+    return text
 
 
 def on_show_question(card: Any, *_args: Any) -> None:
@@ -135,15 +154,26 @@ def _package() -> str:
     return mw.addonManager.addonFromModule(__name__)
 
 
+def _queue_mode_only(mode: str) -> None:
+    """Tell the page which mode is next, without touching the current DOM.
+
+    ``card_will_show`` runs before ``_showAnswerButton`` / ``_showEaseButtons``
+    queue their ``eval``. The watcher then sees this flag when ``#middle``
+    is replaced, including a question that follows another question with no
+    answer in between.
+    """
+
+    if mode == "stock" and _applied == "stock":
+        return
+    _eval_bottom(bottom_bar_script(mode, apply=False))
+
+
 def _apply_mode(mode: str) -> None:
     global _applied
-    previous = _applied
-    if mode == "stock" and previous == "stock":
+    if mode == "stock" and _applied == "stock":
         return
     _applied = mode
     _eval_bottom(bottom_bar_script(mode))
-    if mode == "show" or previous == "show":
-        _schedule_refit()
 
 
 def _eval_bottom(script: str) -> None:
@@ -176,8 +206,6 @@ def _schedule_retry(card: Any, side: str, mode: str) -> None:
         if _applied != mode or not _still_on_side(card_id, side):
             return
         _eval_bottom(bottom_bar_script(mode))
-        if mode == "show":
-            _schedule_refit()
 
     _single_shot(80 if side == "answer" else 50, retry)
 
@@ -197,46 +225,6 @@ def _still_on_side(card_id: Any, side: str) -> bool:
         return int(current.id) == int(card_id)
     except (TypeError, ValueError):
         return False
-
-
-def _schedule_refit() -> None:
-    global _refit_pending
-    if _refit_pending:
-        return
-    _refit_pending = True
-
-    def run() -> None:
-        global _refit_pending
-        _refit_pending = False
-        _fit_bottom()
-
-    _single_shot(120, run)
-
-
-def _fit_bottom() -> None:
-    from aqt import mw
-
-    if mw.state != "review":
-        return
-    web = _bottom_web()
-    if web is None or not hasattr(web, "evalWithCallback"):
-        return
-
-    def on_height(measured: Any) -> None:
-        if mw.state != "review":
-            return
-        height = acceptable_bottom_height(measured)
-        if height is None:
-            return
-        try:
-            web.setFixedHeight(height)
-        except RuntimeError:
-            logger.debug("bottom bar was already destroyed", exc_info=True)
-
-    try:
-        web.evalWithCallback(bottom_height_script(), on_height)
-    except Exception:
-        logger.debug("bottom bar height update failed", exc_info=True)
 
 
 def _single_shot(ms: int, func: Any) -> None:

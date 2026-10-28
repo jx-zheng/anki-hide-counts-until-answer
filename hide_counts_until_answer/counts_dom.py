@@ -18,17 +18,15 @@ still concealed when some other bottom bar leaves them in the page.
 
 The question side conceals the live nodes (and parks the ``.stattxt`` host
 outside ``#middle`` so Anki's answer HTML does not destroy them). The answer
-side puts that same host back as the last child of the Edit button. That is
-the stock ``button > span.stattxt`` relationship (``#ansbut`` on the
-question, ``#time`` on More), and the Edit button's slot is empty after
-``showAnswer``. Stock ``.stattxt`` centers on the button (``left: 50%`` and
-``translateX(-50%)``), which clips a long count string off the left edge of
-the window, so the answer host is start-anchored (``left: 0`` and
-``translate(0, -100%)``) and still sits in the padding above Edit. The bar
-does not grow, and the line does not cover ``.nobold``. Anki hides ``.stat``
-below 584px, so this answer line is not shown in those windows. Stock mode
-puts a concealed host back into ``#ansbut`` when the watcher hid the next
-question early; it does not delete a question Anki just drew.
+side leaves that host parked, so the bottom bar stays at stock height and
+the ease-button intervals are untouched. The same markup is shown in the
+reviewer card webview, ``position: fixed`` and centered on the viewport's
+bottom edge. That edge is the top of the toolbar, so the line sits in the
+gap above the bar the way the question's ``.stattxt`` floats above Show
+Answer. Painting it inside the bottom document clips it (``body { overflow:
+hidden }``) or lands it on the interval labels. Stock mode puts a concealed
+host back into ``#ansbut`` when the watcher hid the next question early; it
+does not delete a question Anki just drew.
 """
 
 from __future__ import annotations
@@ -48,6 +46,17 @@ ANSWER_BUTTON_SELECTOR = "#middle button[data-ease]"
 QUESTION_HOST_SELECTOR = "#ansbut > span.stattxt"
 
 MODES: tuple[str, ...] = ("hide", "show", "stock")
+
+# Shown in the reviewer card webview, not the bottom bar. That viewport
+# already ends at the toolbar, so a small ``bottom`` is the gap above the
+# bar. ``left: 50%`` and ``translateX(-50%)`` match the centered Show Answer
+# counts. The line is not inside the bar, so it cannot cover ``.nobold``.
+ANSWER_OVERLAY_ID = "hcu-answer-counts"
+ANSWER_OVERLAY_STYLE = (
+    "position:fixed;left:50%;bottom:8px;transform:translateX(-50%);"
+    "z-index:1000;pointer-events:none;white-space:nowrap;font-size:small;"
+    "font-weight:normal;text-align:center;margin:0;padding:0;"
+)
 
 
 def count_class_selector() -> str:
@@ -74,6 +83,36 @@ def should_restore_counts(new_state: str, old_state: str) -> bool:
     """True when the reviewer is being left, so a conceal cannot stick."""
 
     return old_state == "review" and new_state != "review"
+
+
+def card_overlay_script(html: str | None) -> str:
+    """JS for the reviewer card webview. Empty html removes the line.
+
+    The bottom-bar document cannot show this line: ``position: fixed`` there
+    is clipped by the toolbar webview. The card viewport's bottom edge is
+    the top of the toolbar.
+    """
+
+    payload = html if isinstance(html, str) else ""
+    return (
+        "(function(){\n"
+        f"  var id = {json.dumps(ANSWER_OVERLAY_ID)};\n"
+        "  var node = document.getElementById(id);\n"
+        f"  var html = {json.dumps(payload)};\n"
+        "  if (!html) {\n"
+        "    if (node) node.remove();\n"
+        "    return;\n"
+        "  }\n"
+        "  if (!node) {\n"
+        "    node = document.createElement('div');\n"
+        "    node.id = id;\n"
+        "    node.setAttribute('data-hcu', 'answer-counts');\n"
+        f"    node.style.cssText = {json.dumps(ANSWER_OVERLAY_STYLE)};\n"
+        "    (document.body || document.documentElement).appendChild(node);\n"
+        "  }\n"
+        "  node.innerHTML = html;\n"
+        "})();\n"
+    )
 
 
 def review_side_for_show_kind(kind: str) -> str | None:
@@ -196,30 +235,7 @@ _INSTALL_JS = r"""
     return host;
   }
 
-  // Edit is the bottom-bar button whose .stattxt slot is empty after
-  // showAnswer. More already has #time, and ease buttons have .nobold.
-  function editButton() {
-    var buttons = document.querySelectorAll("td.stat button");
-    for (var i = 0; i < buttons.length; i++) {
-      if (buttons[i].querySelector("#time")) continue;
-      return buttons[i];
-    }
-    return null;
-  }
-
-  function answerMountedHost() {
-    return directCountHost(editButton());
-  }
-
-  function dropAnswerMount() {
-    var mounted = answerMountedHost();
-    if (mounted) mounted.remove();
-  }
-
   function hideCounts() {
-    // The answer mount sits on Edit, outside #middle, so showQuestion's
-    // innerHTML wipe does not take it with the ease buttons.
-    dropAnswerMount();
     var host = countHost();
     if (host && hostHasCounts(host)) parkHost(host);
     var legacy = legacyOutside();
@@ -268,33 +284,13 @@ _INSTALL_JS = r"""
     return live;
   }
 
-  // Stock .stattxt is centered on its button. Edit sits on the left edge,
-  // so that centering clips a long count string out of the window. Keep the
-  // vertical lift and pin the left edge to the button.
-  function anchorOnEdit(host) {
-    releaseHost(host);
-    host.style.setProperty("pointer-events", "none");
-    host.style.setProperty("left", "0", "important");
-    host.style.setProperty("transform", "translate(0, -100%)", "important");
-  }
-
   function showCounts() {
+    // The parked host stays out of the bar. The card webview draws the line
+    // centered in the gap above the toolbar.
     var legacy = legacyOutside();
     if (legacy.length && answerIsShown()) {
       for (var i = 0; i < legacy.length; i++) unconceal(legacy[i]);
     }
-    if (!answerIsShown()) return;
-    var parent = editButton();
-    if (!parent) return;
-    var mounted = answerMountedHost();
-    if (mounted && hostHasCounts(mounted)) {
-      anchorOnEdit(mounted);
-      return;
-    }
-    var host = parkedHost();
-    if (!host) return;
-    anchorOnEdit(host);
-    if (host.parentNode !== parent) parent.appendChild(host);
   }
 
   function unconcealMarked() {
@@ -306,20 +302,16 @@ _INSTALL_JS = r"""
     var button = document.getElementById("ansbut");
     if (freshQuestionHost()) {
       // This question's counts are already on Show Answer. Drop a parked
-      // host and the previous answer's Edit mount instead of pasting over them.
-      dropAnswerMount();
+      // host from the previous card instead of pasting it over them.
       removePark();
       unconcealMarked();
       document.documentElement.removeAttribute("data-hcu-html");
       return;
     }
-    var host = answerMountedHost() || parkedHost();
+    var host = parkedHost();
     if (host && button) {
       releaseHost(host);
-      host.style.removeProperty("pointer-events");
       if (host.parentNode !== button) button.appendChild(host);
-    } else {
-      dropAnswerMount();
     }
     unconcealMarked();
     removePark();

@@ -148,7 +148,15 @@ function assertAnswerCountsVisible(doc, label) {
     throw new Error(label + ": counts are on an ease button");
   }
   if (!visible(host)) throw new Error(label + ": answer counts are not visible");
-  if ((host.style.left || "").includes("50") || host.style.position === "static") {
+  const left = host.style.getPropertyValue("left");
+  const transform = host.style.getPropertyValue("transform");
+  if (left !== "0px" && left !== "0") {
+    throw new Error(label + ": counts are not start-anchored: " + host.style.cssText);
+  }
+  if (!transform.includes("translate(0") || transform.includes("-50")) {
+    throw new Error(label + ": counts use stock centering: " + host.style.cssText);
+  }
+  if (host.style.position === "static") {
     throw new Error(label + ": host left stock .stattxt placement: " + host.style.cssText);
   }
   const shown = host.querySelector(".learn-count u");

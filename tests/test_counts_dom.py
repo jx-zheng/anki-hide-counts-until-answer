@@ -61,6 +61,9 @@ def test_script_uses_verified_selectors_and_does_not_drive_scheduling() -> None:
 def test_answer_counts_restore_onto_edit_without_a_grow_row() -> None:
     script = bottom_bar_script("show")
     assert "td.stat button" in script
+    assert "injectedCountHost" not in script
+    assert 'host.style.setProperty("left", "0", "important")' in script
+    assert 'host.style.setProperty("transform", "translate(0, -100%)", "important")' in script
     assert "hcu-count-reveal" not in script
     assert "20px" not in script
     assert "left:50%" not in script

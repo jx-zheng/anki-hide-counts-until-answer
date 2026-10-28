@@ -21,12 +21,14 @@ outside ``#middle`` so Anki's answer HTML does not destroy them). The answer
 side puts that same host back as the last child of the Edit button. That is
 the stock ``button > span.stattxt`` relationship (``#ansbut`` on the
 question, ``#time`` on More), and the Edit button's slot is empty after
-``showAnswer``. Anki's own ``.stattxt`` rule then paints the line in the
-padding above Edit, inside the bar, without a taller row and without
-covering ``.nobold``. Parenting it to ``#middle`` or to an ease button
-either clips it above the bar or overprints an interval. Stock mode puts a
-concealed host back into ``#ansbut`` when the watcher hid the next question
-early; it does not delete a question Anki just drew.
+``showAnswer``. Stock ``.stattxt`` centers on the button (``left: 50%`` and
+``translateX(-50%)``), which clips a long count string off the left edge of
+the window, so the answer host is start-anchored (``left: 0`` and
+``translate(0, -100%)``) and still sits in the padding above Edit. The bar
+does not grow, and the line does not cover ``.nobold``. Anki hides ``.stat``
+below 584px, so this answer line is not shown in those windows. Stock mode
+puts a concealed host back into ``#ansbut`` when the watcher hid the next
+question early; it does not delete a question Anki just drew.
 """
 
 from __future__ import annotations
@@ -209,18 +211,6 @@ _INSTALL_JS = r"""
     return directCountHost(editButton());
   }
 
-  function injectedCountHost() {
-    var nodes = document.querySelectorAll("#middle span.stattxt");
-    for (var i = 0; i < nodes.length; i++) {
-      var node = nodes[i];
-      if (node.id === "time") continue;
-      if (node.closest("#hcu-count-park")) continue;
-      if (node.closest("button[data-ease]")) continue;
-      if (hostHasCounts(node)) return node;
-    }
-    return null;
-  }
-
   function dropAnswerMount() {
     var mounted = answerMountedHost();
     if (mounted) mounted.remove();
@@ -278,28 +268,32 @@ _INSTALL_JS = r"""
     return live;
   }
 
+  // Stock .stattxt is centered on its button. Edit sits on the left edge,
+  // so that centering clips a long count string out of the window. Keep the
+  // vertical lift and pin the left edge to the button.
+  function anchorOnEdit(host) {
+    releaseHost(host);
+    host.style.setProperty("pointer-events", "none");
+    host.style.setProperty("left", "0", "important");
+    host.style.setProperty("transform", "translate(0, -100%)", "important");
+  }
+
   function showCounts() {
     var legacy = legacyOutside();
     if (legacy.length && answerIsShown()) {
       for (var i = 0; i < legacy.length; i++) unconceal(legacy[i]);
     }
     if (!answerIsShown()) return;
-    var injected = injectedCountHost();
-    if (injected) {
-      releaseHost(injected);
-      removePark();
-      return;
-    }
+    var parent = editButton();
+    if (!parent) return;
     var mounted = answerMountedHost();
     if (mounted && hostHasCounts(mounted)) {
-      releaseHost(mounted);
+      anchorOnEdit(mounted);
       return;
     }
     var host = parkedHost();
-    var parent = editButton();
-    if (!host || !parent) return;
-    releaseHost(host);
-    host.style.setProperty("pointer-events", "none");
+    if (!host) return;
+    anchorOnEdit(host);
     if (host.parentNode !== parent) parent.appendChild(host);
   }
 

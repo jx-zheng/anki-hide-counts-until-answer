@@ -1,0 +1,2 @@
+# Headless unit tests. The add-on UI imports aqt only inside Anki.
+pytest==8.3.5

@@ -66,7 +66,7 @@ def test_manifest_and_config_docs() -> None:
     )
     assert manifest["package"] == "hide_counts_until_answer"
     assert manifest["name"] == "Hide Counts Until Answer"
-    assert manifest["human_version"] == "1.0.0"
+    assert manifest["human_version"] == "1.0.1"
     assert manifest["min_point_version"] == 250900
     docs = (ROOT / "hide_counts_until_answer" / "config.md").read_text()
     assert "enabled_deck_ids" in docs

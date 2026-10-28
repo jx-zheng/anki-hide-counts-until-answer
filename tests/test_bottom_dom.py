@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from hide_counts_until_answer.counts_dom import bottom_bar_script
+from hide_counts_until_answer.counts_dom import bottom_bar_script, card_overlay_script
 
 # qt/aqt/reviewer.py at the 25.09.2 tag: _bottomHTML, _showAnswerButton, _remaining.
 BOTTOM_SHELL = """
@@ -86,6 +86,8 @@ const hide = readFileSync(process.argv[6], "utf8");
 const stock = readFileSync(process.argv[7], "utf8");
 const show = readFileSync(process.argv[8], "utf8");
 const modeOnlyStock = readFileSync(process.argv[9], "utf8");
+const modeOnlyShow = readFileSync(process.argv[10], "utf8");
+const modeOnlyHide = readFileSync(process.argv[11], "utf8");
 
 function page() {
   return new JSDOM(`<!doctype html><body>${shell}</body>`, {
@@ -120,9 +122,38 @@ function countHost(doc) {
 
 function visible(host) {
   if (!host) return false;
+  if (host.closest("#hcu-count-park")) return false;
   if (host.getAttribute("data-hcu-concealed") === "1") return false;
   if (host.style.getPropertyValue("visibility") === "hidden") return false;
   return true;
+}
+
+function editButton(doc) {
+  const buttons = [...doc.querySelectorAll("td.stat button")];
+  return buttons.find((button) => !button.querySelector("#time")) || null;
+}
+
+function assertAnswerCountsStayOutOfTheBar(doc, label) {
+  if (doc.getElementById("hcu-count-reveal")) {
+    throw new Error(label + ": custom reveal overlay is back");
+  }
+  if ([...doc.querySelectorAll("[style]")].some((node) => (node.getAttribute("style") || "").includes("20px"))) {
+    throw new Error(label + ": grow-row is back");
+  }
+  const edit = editButton(doc);
+  if (edit && edit.querySelector(".new-count")) {
+    throw new Error(label + ": counts are mounted on Edit");
+  }
+  if (doc.querySelector("#middle .new-count, #middle .learn-count, #middle .review-count")) {
+    throw new Error(label + ": counts are inside the answer bar");
+  }
+  const parked = doc.querySelector("#hcu-count-park .learn-count u");
+  if (!parked || parked.textContent !== "3") {
+    throw new Error(label + ": parked answer counts were lost");
+  }
+  if (visible(doc.querySelector("#hcu-count-park .stattxt"))) {
+    throw new Error(label + ": parked counts are visible in the bar");
+  }
 }
 
 const whitelisted = page();
@@ -174,23 +205,91 @@ const answered = page();
 showQuestion(answered, questionA);
 run(answered, hide);
 await flush();
+const hiddenOnFront = countHost(answered.window.document);
+if (hiddenOnFront) {
+  throw new Error("whitelisted question still has counts on Show Answer");
+}
 showQuestion(answered, answer);
 await flush();
 run(answered, show);
 await flush();
-const reveal = answered.window.document.getElementById("hcu-count-reveal");
-if (!reveal) throw new Error("answer did not reveal counts");
-if (reveal.style.position !== "absolute") {
-  throw new Error("reveal is not absolute: " + reveal.style.cssText);
-}
-if (reveal.style.padding && reveal.style.padding !== "0px") {
-  throw new Error("reveal padding grows the bar: " + reveal.style.padding);
-}
-const shown = reveal.querySelector(".learn-count u");
-if (!shown || shown.textContent !== "3") throw new Error("answer lost the underline");
+assertAnswerCountsStayOutOfTheBar(answered.window.document, "show after flip");
 const buttons = [...answered.window.document.querySelectorAll("#middle button[data-ease]")];
 if (buttons.map((button) => button.getAttribute("data-ease")).join(",") !== "1,2,3,4") {
   throw new Error("ease buttons changed");
+}
+
+// card_will_show sets the mode before Anki replaces #middle. The watcher
+// must reveal on that replacement, which is showAnswer.
+const flipped = page();
+showQuestion(flipped, questionA);
+run(flipped, hide);
+await flush();
+run(flipped, modeOnlyShow);
+showQuestion(flipped, answer);
+await flush();
+assertAnswerCountsStayOutOfTheBar(flipped.window.document, "showAnswer observer");
+run(flipped, modeOnlyHide);
+showQuestion(flipped, questionB);
+await flush();
+const nextFront = countHost(flipped.window.document);
+if (visible(nextFront)) throw new Error("next question still shows counts");
+const editAfter = editButton(flipped.window.document);
+if (editAfter && editAfter.querySelector(".new-count")) {
+  throw new Error("answer counts stuck on Edit");
+}
+
+const plain = page();
+showQuestion(plain, questionA);
+const untouched = countHost(plain.window.document);
+if (!visible(untouched)) throw new Error("stock question is missing counts");
+if (untouched.querySelector(".learn-count u").textContent !== "3") {
+  throw new Error("stock question counts changed before the add-on ran");
+}
+run(plain, stock);
+await flush();
+const stockHost = countHost(plain.window.document);
+if (!visible(stockHost)) throw new Error("non-whitelist question hid counts");
+if (stockHost.querySelector(".learn-count u").textContent !== "3") {
+  throw new Error("non-whitelist counts changed: " + stockHost.innerHTML);
+}
+if (plain.window.document.getElementById("hcu-count-park")) {
+  throw new Error("non-whitelist question parked counts");
+}
+showQuestion(plain, answer);
+await flush();
+run(plain, stock);
+await flush();
+const plainDoc = plain.window.document;
+if (plainDoc.querySelector("[data-hcu-concealed]")) {
+  throw new Error("non-whitelist answer concealed a node");
+}
+if (plainDoc.getElementById("hcu-count-reveal")) {
+  throw new Error("non-whitelist answer injected a reveal");
+}
+const plainEdit = editButton(plainDoc);
+if (plainEdit && plainEdit.querySelector(".new-count")) {
+  throw new Error("non-whitelist answer mounted counts on Edit");
+}
+const plainEases = [...plainDoc.querySelectorAll("#middle button[data-ease]")];
+if (plainEases.map((button) => button.getAttribute("data-ease")).join(",") !== "1,2,3,4") {
+  throw new Error("non-whitelist ease buttons changed");
+}
+
+const noDue = page();
+showQuestion(noDue, questionA);
+run(noDue, hide);
+await flush();
+if (!noDue.window.document.documentElement.getAttribute("data-hcu-html")) {
+  throw new Error("counts were not remembered");
+}
+showQuestion(noDue, `<table cellpadding=0><tr><td class=stat2 align=center><button id="ansbut">Show Answer<span class=stattxt></span></button></td></tr></table>`);
+await flush();
+if (noDue.window.document.documentElement.getAttribute("data-hcu-html")) {
+  throw new Error("stale counts kept after due counts were turned off");
+}
+if (noDue.window.document.getElementById("hcu-count-park")) {
+  throw new Error("stale park kept after due counts were turned off");
 }
 console.log("bottom bar regression ok");
 """
@@ -229,6 +328,8 @@ def test_whitelisted_question_then_other_question_keeps_counts(tmp_path: Path) -
         "stock.js": bottom_bar_script("stock"),
         "show.js": bottom_bar_script("show"),
         "mode-only-stock.js": bottom_bar_script("stock", apply=False),
+        "mode-only-show.js": bottom_bar_script("show", apply=False),
+        "mode-only-hide.js": bottom_bar_script("hide", apply=False),
         "run.mjs": _NODE_RUNNER,
     }
     for name, contents in files.items():
@@ -250,7 +351,85 @@ def test_whitelisted_question_then_other_question_keeps_counts(tmp_path: Path) -
             str(tmp_path / "stock.js"),
             str(tmp_path / "show.js"),
             str(tmp_path / "mode-only-stock.js"),
+            str(tmp_path / "mode-only-show.js"),
+            str(tmp_path / "mode-only-hide.js"),
         ],
+        check=True,
+        cwd=tmp_path,
+        env=env,
+    )
+
+
+_OVERLAY_RUNNER = r"""
+import { createRequire } from "module";
+import { readFileSync } from "fs";
+
+const require = createRequire(process.env.JSDOM_FROM);
+const { JSDOM } = require("jsdom");
+const show = readFileSync(process.argv[2], "utf8");
+const clear = readFileSync(process.argv[3], "utf8");
+
+const dom = new JSDOM("<!doctype html><body><div id=qa>answer</div></body>", {
+  pretendToBeVisual: true,
+  runScripts: "dangerously",
+});
+const doc = dom.window.document;
+function run(source) {
+  const script = doc.createElement("script");
+  script.textContent = source;
+  doc.body.appendChild(script);
+}
+run(show);
+const line = doc.getElementById("hcu-answer-counts");
+if (!line) throw new Error("answer counts are not shown");
+if (line.style.position !== "fixed") throw new Error("not fixed: " + line.style.cssText);
+if (line.style.left !== "50%") throw new Error("not centered: " + line.style.cssText);
+if (!line.style.transform.includes("translateX(-50%")) {
+  throw new Error("not centered: " + line.style.cssText);
+}
+if (!line.style.bottom || line.style.bottom === "0px") {
+  throw new Error("line is flush with a bar edge: " + line.style.cssText);
+}
+if (line.closest("button") || line.closest("#middle") || line.closest("td.stat")) {
+  throw new Error("counts are inside the bottom bar");
+}
+const marked = line.querySelector(".learn-count u");
+if (!marked || marked.textContent !== "3") throw new Error("counts missing: " + line.innerHTML);
+const colors = doc.getElementById("hcu-answer-counts-style");
+if (!colors || !colors.textContent.includes(".new-count{color:var(--state-new)}")) {
+  throw new Error("count colors missing");
+}
+if (!colors.textContent.includes(".learn-count{color:var(--state-learn)}")) {
+  throw new Error("learn color missing");
+}
+if (!colors.textContent.includes(".review-count{color:var(--state-review)}")) {
+  throw new Error("review color missing");
+}
+run(clear);
+if (doc.getElementById("hcu-answer-counts")) throw new Error("overlay stayed on the next question");
+console.log("overlay ok");
+"""
+
+
+def test_answer_overlay_sits_above_the_toolbar(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.fail("node is required to run the overlay regression")
+    node_path = _jsdom_node_path()
+    html = (
+        '<span class=new-count>12</span> + '
+        '<span class=learn-count><u>3</u></span> + '
+        '<span class=review-count>40</span>'
+    )
+    (tmp_path / "show.js").write_text(card_overlay_script(html), encoding="utf8")
+    (tmp_path / "clear.js").write_text(card_overlay_script(None), encoding="utf8")
+    (tmp_path / "run.mjs").write_text(_OVERLAY_RUNNER, encoding="utf8")
+    parent = str(Path(node_path).parent / "package.json")
+    if not Path(parent).is_file():
+        parent = str(Path(node_path).parent / "node_modules" / "jsdom" / "package.json")
+    env = dict(os.environ)
+    env["JSDOM_FROM"] = parent
+    subprocess.run(
+        ["node", str(tmp_path / "run.mjs"), str(tmp_path / "show.js"), str(tmp_path / "clear.js")],
         check=True,
         cwd=tmp_path,
         env=env,

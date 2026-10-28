@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from hide_counts_until_answer.counts_dom import (
     ANSWER_BUTTON_SELECTOR,
+    ANSWER_COUNT_COLORS,
+    ANSWER_OVERLAY_STYLE,
     COUNT_CLASSES,
     LEGACY_COUNT_IDS,
     QUESTION_HOST_SELECTOR,
-    REVEAL_STYLE,
     bottom_bar_script,
+    card_overlay_script,
     count_class_selector,
     review_side_for_show_kind,
     should_restore_counts,
@@ -45,9 +47,10 @@ def test_script_uses_verified_selectors_and_does_not_drive_scheduling() -> None:
     assert "visibility" in script
     assert "data-hcu-concealed" in script
     assert "data-hcu-html" in script
-    assert script.count(".remove()") == 2
-    assert "hcu-count-reveal" in script
+    assert script.count(".remove()") == 1
+    assert "hcu-count-reveal" not in script
     assert "hcu-count-park" in script
+    assert "td.stat button" not in script
     assert "middle.innerHTML" not in script
     assert "outer.innerHTML" not in script
     assert "pycmd" not in script
@@ -58,12 +61,30 @@ def test_script_uses_verified_selectors_and_does_not_drive_scheduling() -> None:
     assert 'window.__hcuSetMode("stock")' in bottom_bar_script("nope")
 
 
-def test_answer_counts_are_absolute_and_stock_puts_them_back() -> None:
+def test_answer_overlay_is_centered_above_the_toolbar() -> None:
     script = bottom_bar_script("show")
-    assert "position:absolute" in script
-    assert REVEAL_STYLE in script
+    assert "td.stat button" not in script
+    assert "injectedCountHost" not in script
+    assert "hcu-count-reveal" not in script
+    assert "20px" not in script
+    assert "adjustHeightToFit" not in script
+    assert "getBoundingClientRect" not in script
     assert "scrollHeight" not in script
-    assert "padding:2px 8px 12px" not in script
+    overlay = card_overlay_script(
+        '<span class=new-count>12</span> + <span class=learn-count><u>3</u></span>'
+    )
+    assert "position:fixed" in overlay
+    assert "left:50%" in overlay
+    assert "translateX(-50%)" in overlay
+    assert "bottom:8px" in overlay
+    assert ANSWER_OVERLAY_STYLE in overlay
+    assert ANSWER_COUNT_COLORS in overlay
+    assert ".new-count{color:var(--state-new)}" in overlay
+    assert ".learn-count{color:var(--state-learn)}" in overlay
+    assert ".review-count{color:var(--state-review)}" in overlay
+    assert "td.stat" not in overlay
+    assert "adjustHeightToFit" not in overlay
+    assert card_overlay_script(None).count(".remove()") == 1
     mode_only = bottom_bar_script("stock", apply=False)
     assert 'window.__hcuSetModeOnly("stock")' in mode_only
     assert 'window.__hcuSetMode("stock")' not in mode_only

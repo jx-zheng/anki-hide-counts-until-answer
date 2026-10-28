@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from hide_counts_until_answer.counts_dom import (
     ANSWER_BUTTON_SELECTOR,
+    ANSWER_COUNT_COLORS,
     ANSWER_OVERLAY_STYLE,
     COUNT_CLASSES,
     LEGACY_COUNT_IDS,
@@ -77,6 +78,10 @@ def test_answer_overlay_is_centered_above_the_toolbar() -> None:
     assert "translateX(-50%)" in overlay
     assert "bottom:8px" in overlay
     assert ANSWER_OVERLAY_STYLE in overlay
+    assert ANSWER_COUNT_COLORS in overlay
+    assert ".new-count{color:var(--state-new)}" in overlay
+    assert ".learn-count{color:var(--state-learn)}" in overlay
+    assert ".review-count{color:var(--state-review)}" in overlay
     assert "td.stat" not in overlay
     assert "adjustHeightToFit" not in overlay
     assert card_overlay_script(None).count(".remove()") == 1

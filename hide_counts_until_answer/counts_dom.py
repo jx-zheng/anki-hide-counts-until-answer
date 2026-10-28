@@ -57,6 +57,13 @@ ANSWER_OVERLAY_STYLE = (
     "z-index:1000;pointer-events:none;white-space:nowrap;font-size:small;"
     "font-weight:normal;text-align:center;margin:0;padding:0;"
 )
+# reviewer.css does not include card-counts.scss. These variables are set
+# on the card webview, same names as the bottom bar.
+ANSWER_COUNT_COLORS = (
+    "#hcu-answer-counts .new-count{color:var(--state-new)}"
+    "#hcu-answer-counts .learn-count{color:var(--state-learn)}"
+    "#hcu-answer-counts .review-count{color:var(--state-review)}"
+)
 
 
 def count_class_selector() -> str:
@@ -109,6 +116,13 @@ def card_overlay_script(html: str | None) -> str:
         "    node.setAttribute('data-hcu', 'answer-counts');\n"
         f"    node.style.cssText = {json.dumps(ANSWER_OVERLAY_STYLE)};\n"
         "    (document.body || document.documentElement).appendChild(node);\n"
+        "  }\n"
+        "  var styleId = id + '-style';\n"
+        "  if (!document.getElementById(styleId)) {\n"
+        "    var style = document.createElement('style');\n"
+        "    style.id = styleId;\n"
+        f"    style.textContent = {json.dumps(ANSWER_COUNT_COLORS)};\n"
+        "    (document.head || document.documentElement).appendChild(style);\n"
         "  }\n"
         "  node.innerHTML = html;\n"
         "})();\n"
@@ -235,9 +249,15 @@ _INSTALL_JS = r"""
     return host;
   }
 
+  function forgetCounts() {
+    document.documentElement.removeAttribute("data-hcu-html");
+    removePark();
+  }
+
   function hideCounts() {
     var host = countHost();
     if (host && hostHasCounts(host)) parkHost(host);
+    else if (host) forgetCounts();
     var legacy = legacyOutside();
     for (var i = 0; i < legacy.length; i++) conceal(legacy[i]);
   }

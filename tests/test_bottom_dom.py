@@ -275,6 +275,22 @@ const plainEases = [...plainDoc.querySelectorAll("#middle button[data-ease]")];
 if (plainEases.map((button) => button.getAttribute("data-ease")).join(",") !== "1,2,3,4") {
   throw new Error("non-whitelist ease buttons changed");
 }
+
+const noDue = page();
+showQuestion(noDue, questionA);
+run(noDue, hide);
+await flush();
+if (!noDue.window.document.documentElement.getAttribute("data-hcu-html")) {
+  throw new Error("counts were not remembered");
+}
+showQuestion(noDue, `<table cellpadding=0><tr><td class=stat2 align=center><button id="ansbut">Show Answer<span class=stattxt></span></button></td></tr></table>`);
+await flush();
+if (noDue.window.document.documentElement.getAttribute("data-hcu-html")) {
+  throw new Error("stale counts kept after due counts were turned off");
+}
+if (noDue.window.document.getElementById("hcu-count-park")) {
+  throw new Error("stale park kept after due counts were turned off");
+}
 console.log("bottom bar regression ok");
 """
 
@@ -379,6 +395,16 @@ if (line.closest("button") || line.closest("#middle") || line.closest("td.stat")
 }
 const marked = line.querySelector(".learn-count u");
 if (!marked || marked.textContent !== "3") throw new Error("counts missing: " + line.innerHTML);
+const colors = doc.getElementById("hcu-answer-counts-style");
+if (!colors || !colors.textContent.includes(".new-count{color:var(--state-new)}")) {
+  throw new Error("count colors missing");
+}
+if (!colors.textContent.includes(".learn-count{color:var(--state-learn)}")) {
+  throw new Error("learn color missing");
+}
+if (!colors.textContent.includes(".review-count{color:var(--state-review)}")) {
+  throw new Error("review color missing");
+}
 run(clear);
 if (doc.getElementById("hcu-answer-counts")) throw new Error("overlay stayed on the next question");
 console.log("overlay ok");

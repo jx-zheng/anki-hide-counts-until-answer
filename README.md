@@ -79,3 +79,7 @@ Headless. `aqt` is not imported. The suite checks:
 - The bottom-bar script targets `.new-count`, `.learn-count`, and `.review-count`, and `#ansbut > span.stattxt`. It does not call `pycmd`, replace `#middle` HTML, or change the bottom-bar height. On the answer the counts stay parked in the bar and a fixed, horizontally centered line is drawn at the bottom of the card webview, above the toolbar and clear of the interval labels.
 - A whitelisted question followed immediately by another question (no answer in between) leaves that next card's counts visible. The markup is the Anki 25.09.2 reviewer bottom bar.
 - `scripts/package_addon.py` builds an `.ankiaddon` with `zipfile`. The shell wrapper does not call the `zip` CLI.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
